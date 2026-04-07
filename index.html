@@ -802,13 +802,12 @@ LIMIT 20;`
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
 
-      // Extensions
+      // Extensions — both are required:
+      //   httpfs  : remote HTTPS / S3 parquet reading (Overture data)
+      //   spatial : geometry decoding + ST_* functions
+      setStatus("Loading extensions…");
       await conn.query(`INSTALL httpfs; LOAD httpfs;`);
-      try {
-        await conn.query(`INSTALL spatial; LOAD spatial;`);
-      } catch (e) {
-        console.warn("Spatial extension unavailable:", e.message);
-      }
+      await conn.query(`INSTALL spatial; LOAD spatial;`);
 
       setStatus("Creating raw views…");
 
