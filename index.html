@@ -847,9 +847,10 @@ LIMIT 20;`
             CAST(categories.primary AS VARCHAR)    AS category,
             CAST(categories.alternate[1] AS VARCHAR) AS subcategory,
             CAST(context.country AS VARCHAR)       AS country,
+            -- DuckDB lists are 1-indexed; GeoJSON Point coordinates = [lon, lat]
+            -- so [1] = longitude, [2] = latitude
             CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
             CAST(geometry.coordinates[1] AS DOUBLE) AS lon
-          FROM places_raw
           WHERE geometry IS NOT NULL;
         `);
         placesViewOk = true;
@@ -897,9 +898,10 @@ LIMIT 20;`
               CAST(postcode AS VARCHAR) AS postcode,
               CAST(address_levels[2].value AS VARCHAR) AS city,
               CAST(country AS VARCHAR)  AS country,
+              -- DuckDB lists are 1-indexed; GeoJSON Point coordinates = [lon, lat]
+              -- so [1] = longitude, [2] = latitude
               CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
               CAST(geometry.coordinates[1] AS DOUBLE) AS lon
-            FROM addresses_raw
             WHERE geometry IS NOT NULL;
           `);
           addressViewOk = true;
@@ -1154,7 +1156,7 @@ WITH uk AS (
     ${UK.north} AS north
 )
 SELECT p.name, p.category, p.lat, p.lon
-FROM places uk
+FROM places AS p, uk
 WHERE p.lon BETWEEN uk.west AND uk.east
   AND p.lat BETWEEN uk.south AND uk.north
 LIMIT 50;
@@ -1205,7 +1207,8 @@ LIMIT 50;
   // Boot
   // ---------------------------------------------------------------------------
   renderClues();
-  selectClue(clues.find(c => c.id === "places-warmup"));
+  const defaultClue = clues.find(c => c.id === "places-warmup");
+  if (defaultClue) selectClue(defaultClue);
 </script>
 </body>
 </html>
