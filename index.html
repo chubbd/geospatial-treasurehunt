@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Geospatial SQL Treasure Hunt</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!--
+    ⚠️  IMPORTANT: This app uses SharedArrayBuffer (required by DuckDB-WASM).
+        It MUST be served over HTTP(S) — e.g. GitHub Pages — NOT opened via file://.
+        Opening via file:// will fail with cross-origin isolation errors.
+  -->
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121a2b;
+      --panel-2: #182338;
+      --text: #e8eefc;
+      --muted: #9fb0d1;
+      --accent: #67e8f9;
+      --accent-2: #fbbf24;
+      --danger: #fb7185;
+      --ok: #4ade80;
+      --border: #24324d;
+      --code: #0a0f1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 390px 1fr;
+    }
+    #sidebar {
+      border-right: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #main {
+      display: grid;
+      grid-template-rows: 52% 48%;
+      min-height: 0;
+    }
+    .section {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .title {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .small { font-size: 12px; color: var(--muted); }
+    #clues {
+      overflow-y: auto;
+      padding: 8px;
+      gap: 8px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+    .clue {
+      padding: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+      border-radius: 10px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .clue:hover { border-color: var(--accent); }
+    .clue.active {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 1px rgba(251,191,36,.35) inset;
+    }
+    .clue h4 { margin: 0 0 4px 0; font-size: 13px; }
+    .clue p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .clue .theme-tag {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 1px 7px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(103,232,249,.12);
+      border: 1px solid rgba(103,232,249,.25);
+      color: var(--accent);
+    }
+    #map { width: 100%; height: 100%; }
+    #workbench {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      min-height: 0;
+      border-top: 1px solid var(--border);
+    }
+    #editorPane, #resultsPane {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #editorPane {
+      border-right: 1px solid var(--border);
+      background: var(--panel);
+    }
+    #resultsPane { background: #0f1728; }
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: #1a2640;
+      color: var(--text);
+      padding: 6px 11px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: #10304a; border-color: #155e75; }
+    button.warn { background: #3a2a10; border-color: #8a5a12; }
+    button.danger { background: #3a1020; border-color: #8a1232; }
+    textarea {
+      width: 100%;
+      flex: 1;
+      resize: none;
+      border: 0;
+      outline: none;
+      padding: 12px 14px;
+      background: var(--code);
+      color: #dbeafe;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    #status {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    #status.ok { color: var(--ok); }
+    #status.err { color: var(--danger); }
+    #resultsMeta {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    #results { overflow: auto; flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid #1f2a44; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #15213a; z-index: 1; }
+    code.inline {
+      background: rgba(255,255,255,.06);
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .hint {
+      margin-top: 8px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: rgba(103,232,249,.08);
+      border: 1px solid rgba(103,232,249,.18);
+      font-size: 12px;
+      color: #c8f6fb;
+    }
+    .bbox-box {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(251,191,36,.08);
+      border: 1px solid rgba(251,191,36,.25);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #fde68a;
+    }
+    .warn-box {
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: rgba(251, 113, 133, .08);
+      border: 1px solid rgba(251, 113, 133, .28);
+      font-size: 12px;
+      color: #fda4af;
+      margin-bottom: 8px;
+    }
+    .footer-note {
+      padding: 10px 14px;
+      color: var(--muted);
+      font-size: 11px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #currentClueSection { flex-shrink: 0; }
+    #themeFilter {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #themeFilter button {
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: 20px;
+    }
+    #themeFilter button.active { border-color: var(--accent); background: rgba(103,232,249,.12); }
+  </style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <div class="section">
+    <div class="title">🗺️ Geospatial SQL Treasure Hunt</div>
+    <div class="warn-box">
+      ⚠️ <strong>Serve over HTTP(S)</strong> — GitHub Pages, a local dev server, etc.
+      Opening via <code class="inline">file://</code> will fail (SharedArrayBuffer / COOP headers required).
+    </div>
+    <div class="muted">
+      Query remote <strong>Overture Maps</strong> Parquet data from public S3 using
+      <strong>DuckDB-WASM</strong> — all in the browser, no backend needed.
+    </div>
+    <div class="bbox-box">
+      <div><strong>🇬🇧 UK Bounding Box (use this for performance!)</strong></div>
+      <div>west&nbsp;&nbsp;= <code class="inline">-8.75</code> &nbsp; east&nbsp;&nbsp;= <code class="inline">1.90</code></div>
+      <div>south = <code class="inline">49.80</code> &nbsp; north = <code class="inline">60.95</code></div>
+      <div style="margin-top:7px; color: #fbbf24aa; font-size:11px;">
+        Always prefilter to the UK bbox — it drastically reduces the Parquet row groups scanned.
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="currentClueSection">
+    <div style="font-weight:700; margin-bottom:6px; font-size:13px;">Current clue</div>
+    <div id="currentClueTitle" style="font-weight:600;">Select a clue →</div>
+    <div id="currentClueText" class="muted" style="margin-top:4px; font-size:12px;">
+      Pick a clue from the list below.
+    </div>
+    <div id="currentHint" class="hint" style="display:none;"></div>
+  </div>
+
+  <div id="themeFilter">
+    <span style="font-size:11px; color:var(--muted); align-self:center;">Filter:</span>
+    <button class="active" data-theme="all">All</button>
+    <button data-theme="places">Places</button>
+    <button data-theme="addresses">Addresses</button>
+    <button data-theme="buildings">Buildings</button>
+    <button data-theme="divisions">Divisions</button>
+    <button data-theme="transportation">Transport</button>
+    <button data-theme="schema">Schema</button>
+  </div>
+
+  <div id="clues"></div>
+
+  <div class="footer-note">
+    Tip: run <em>Initialize DuckDB</em> first, then select a clue and click <em>Insert Demo SQL</em>.
+  </div>
+</aside>
+
+<main id="main">
+  <div id="map"></div>
+
+  <div id="workbench">
+    <section id="editorPane">
+      <div class="toolbar">
+        <button id="initBtn" class="warn">⚡ Init DuckDB</button>
+        <button id="runBtn" class="primary">▶ Run SQL</button>
+        <button id="hintBtn">💡 Hint</button>
+        <button id="sampleBtn">📋 Insert Demo SQL</button>
+        <button id="clearMapBtn">🗑 Clear Map</button>
+        <button id="bboxSnippetBtn">📐 UK BBox Template</button>
+      </div>
+      <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
+      <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first, then select a clue and click "📋 Insert Demo SQL".
+-- Always prefilter to the UK bounding box for performance:
+--   lon BETWEEN -8.75 AND 1.90  AND  lat BETWEEN 49.80 AND 60.95
+</textarea>
+    </section>
+
+    <section id="resultsPane">
+      <div id="resultsMeta">No results yet.</div>
+      <div id="results">
+        <div style="padding:14px; color:var(--muted); font-size:12px;">
+          Results will appear here after you run a query.
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script type="module">
+  import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm";
+
+  // ---------------------------------------------------------------------------
+  // Constants
+  // ---------------------------------------------------------------------------
+  const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
+
+  const OVERTURE_BASE =
+    "https://overturemaps-us-west-2.s3.amazonaws.com/release/2025-01-22.0";
+
+  const URLS = {
+    places:         `${OVERTURE_BASE}/theme=places/type=place/*`,
+    addresses:      `${OVERTURE_BASE}/theme=addresses/type=address/*`,
+    buildings:      `${OVERTURE_BASE}/theme=buildings/type=building/*`,
+    divisions:      `${OVERTURE_BASE}/theme=divisions/type=division/*`,
+    divisionAreas:  `${OVERTURE_BASE}/theme=divisions/type=division_area/*`,
+    segments:       `${OVERTURE_BASE}/theme=transportation/type=segment/*`,
+  };
+
+  // ---------------------------------------------------------------------------
+  // Clues / demo queries
+  // ---------------------------------------------------------------------------
+  const clues = [
+    // ── Schema inspection ──────────────────────────────────────────────────
+    {
+      id: "schema-places",
+      theme: "schema",
+      title: "Inspect: places schema",
+      text: "Peek at the raw Overture places schema before querying.",
+      hint: "DESCRIBE gives you column names and types without fetching data rows.",
+      starterSql: `-- Inspect the raw places schema (fast — no data fetched)
+DESCRIBE places_raw;`
+    },
+    {
+      id: "schema-addresses",
+      theme: "schema",
+      title: "Inspect: addresses schema",
+      text: "Peek at the raw Overture addresses schema.",
+      hint: "Check for street, postcode, country columns.",
+      starterSql: `-- Inspect the raw addresses schema
+DESCRIBE addresses_raw;`
+    },
+    {
+      id: "schema-buildings",
+      theme: "schema",
+      title: "Inspect: buildings schema",
+      text: "Peek at the raw Overture buildings schema.",
+      hint: "Look for height, num_floors, names, and bbox columns.",
+      starterSql: `-- Inspect the raw buildings schema
+DESCRIBE buildings_raw;`
+    },
+    {
+      id: "schema-divisions",
+      theme: "schema",
+      title: "Inspect: divisions schema",
+      text: "Peek at the Overture divisions schema (countries, regions, cities…).",
+      hint: "Look for subtype, country, names columns.",
+      starterSql: `-- Inspect the raw divisions schema
+DESCRIBE divisions_raw;`
+    },
+    {
+      id: "schema-transport",
+      theme: "schema",
+      title: "Inspect: transportation segments schema",
+      text: "Peek at the Overture transportation segments schema.",
+      hint: "Look for road, class, and geometry columns.",
+      starterSql: `-- Inspect the raw transportation segments schema
+DESCRIBE segments_raw;`
+    },
+
+    // ── Places ─────────────────────────────────────────────────────────────
+    {
+      id: "places-warmup",
+      theme: "places",
+      title: "Places: named UK sample",
+      text: "Find 25 named places in the UK. A warm-up to get data on the map.",
+      hint: "Use the places_uk view — it pre-applies the UK bbox filter.",
+      starterSql: `-- 25 named UK places (uses bbox-filtered view for speed)
+SELECT id, name, category, lat, lon
+FROM places_uk
+WHERE name IS NOT NULL
+LIMIT 25;`
+    },
+    {
+      id: "places-category",
+      theme: "places",
+      title: "Places: filter by category",
+      text: "Find UK restaurants or cafes.",
+      hint: "Use ILIKE for case-insensitive category matching.",
+      starterSql: `-- UK restaurants & cafes
+SELECT name, category, lat, lon
+FROM places_uk
+WHERE category ILIKE '%restaurant%'
+   OR category ILIKE '%cafe%'
+   OR category ILIKE '%coffee%'
+LIMIT 50;`
+    },
+    {
+      id: "places-treasure",
+      theme: "places",
+      title: "Places: London treasure hunt",
+      text: "I am at a famous London landmark. Find museums near the centre of London.",
+      hint: "London centre is roughly lat=51.507, lon=-0.127. Filter within ~0.05 degrees.",
+      starterSql: `-- Museums near central London
+SELECT name, category, lat, lon
+FROM places_uk
+WHERE category ILIKE '%museum%'
+  AND lat BETWEEN 51.46 AND 51.56
+  AND lon BETWEEN -0.20 AND -0.05
+ORDER BY name
+LIMIT 30;`
+    },
+    {
+      id: "places-count",
+      theme: "places",
+      title: "Places: count by category (UK)",
+      text: "Which categories have the most places in the UK?",
+      hint: "GROUP BY category and ORDER BY count descending.",
+      starterSql: `-- Top place categories in the UK
+SELECT category, COUNT(*) AS cnt
+FROM places_uk
+WHERE category IS NOT NULL
+GROUP BY category
+ORDER BY cnt DESC
+LIMIT 30;`
+    },
+
+    // ── Addresses ──────────────────────────────────────────────────────────
+    {
+      id: "addresses-warmup",
+      theme: "addresses",
+      title: "Addresses: UK sample",
+      text: "Sample 25 UK addresses. Explore the address schema.",
+      hint: "Use addresses_uk — bbox pre-filtered. Look for street, postcode fields.",
+      starterSql: `-- 25 UK addresses from the bbox-filtered view
+SELECT *
+FROM addresses_uk
+LIMIT 25;`
+    },
+    {
+      id: "addresses-postcode",
+      theme: "addresses",
+      title: "Addresses: search by postcode",
+      text: "Find addresses in a specific UK postcode area (e.g. EC1).",
+      hint: "Filter postcode with ILIKE 'EC1%'.",
+      starterSql: `-- Addresses in the EC1 London postcode district
+SELECT street, postcode, city, lat, lon
+FROM addresses_uk
+WHERE postcode ILIKE 'EC1%'
+LIMIT 40;`
+    },
+    {
+      id: "addresses-city",
+      theme: "addresses",
+      title: "Addresses: count by city",
+      text: "Which cities have the most Overture addresses in the UK?",
+      hint: "GROUP BY city and ORDER BY count descending.",
+      starterSql: `-- UK cities by address count
+SELECT city, COUNT(*) AS cnt
+FROM addresses_uk
+WHERE city IS NOT NULL
+GROUP BY city
+ORDER BY cnt DESC
+LIMIT 25;`
+    },
+    {
+      id: "addresses-raw-schema",
+      theme: "addresses",
+      title: "Addresses: raw schema fallback",
+      text: "If addresses_uk columns differ, inspect the raw schema to adapt.",
+      hint: "DESCRIBE shows real column names. Overture schemas can change between releases.",
+      starterSql: `-- Check actual addresses schema, then adapt the query
+DESCRIBE addresses_raw;
+
+-- After inspecting, try:
+-- SELECT * FROM addresses_raw
+-- WHERE bbox.xmax >= -8.75 AND bbox.xmin <= 1.90
+--   AND bbox.ymax >= 49.80 AND bbox.ymin <= 60.95
+-- LIMIT 20;`
+    },
+
+    // ── Buildings ──────────────────────────────────────────────────────────
+    {
+      id: "buildings-warmup",
+      theme: "buildings",
+      title: "Buildings: UK sample",
+      text: "Sample 25 UK buildings with name and size info.",
+      hint: "Use buildings_uk — bbox pre-filtered. Coordinates are centroid lat/lon.",
+      starterSql: `-- 25 named UK buildings
+SELECT id, name, height, num_floors, lat, lon
+FROM buildings_uk
+WHERE name IS NOT NULL
+LIMIT 25;`
+    },
+    {
+      id: "buildings-tallest",
+      theme: "buildings",
+      title: "Buildings: tallest in the UK",
+      text: "Find the tallest buildings in the UK subset.",
+      hint: "ORDER BY height DESC. Filter height IS NOT NULL.",
+      starterSql: `-- Tallest UK buildings
+SELECT name, height, num_floors, lat, lon
+FROM buildings_uk
+WHERE height IS NOT NULL
+ORDER BY height DESC
+LIMIT 20;`
+    },
+    {
+      id: "buildings-london",
+      theme: "buildings",
+      title: "Buildings: tall buildings in London",
+      text: "Find the tallest buildings in London specifically.",
+      hint: "Combine height ordering with a tighter London bbox (lat ~51.4–51.6, lon ~-0.25–0.05).",
+      starterSql: `-- Tallest buildings within central London
+SELECT name, height, num_floors, lat, lon
+FROM buildings_uk
+WHERE height IS NOT NULL
+  AND lat BETWEEN 51.40 AND 51.60
+  AND lon BETWEEN -0.25 AND 0.05
+ORDER BY height DESC
+LIMIT 20;`
+    },
+    {
+      id: "buildings-many-floors",
+      theme: "buildings",
+      title: "Buildings: most floors in the UK",
+      text: "Which UK buildings have the most recorded floors?",
+      hint: "ORDER BY num_floors DESC.",
+      starterSql: `-- UK buildings with the most floors
+SELECT name, num_floors, height, lat, lon
+FROM buildings_uk
+WHERE num_floors IS NOT NULL
+ORDER BY num_floors DESC
+LIMIT 20;`
+    },
+
+    // ── Divisions ──────────────────────────────────────────────────────────
+    {
+      id: "divisions-warmup",
+      theme: "divisions",
+      title: "Divisions: UK regions & cities",
+      text: "List UK administrative divisions (regions, cities, counties).",
+      hint: "Use divisions_uk. The subtype column indicates the admin level.",
+      starterSql: `-- UK divisions sample (regions, cities, counties)
+SELECT id, name, subtype, country, lat, lon
+FROM divisions_uk
+WHERE name IS NOT NULL
+LIMIT 40;`
+    },
+    {
+      id: "divisions-cities",
+      theme: "divisions",
+      title: "Divisions: cities only",
+      text: "List places classified as cities within the UK.",
+      hint: "Filter subtype = 'city' or ILIKE '%city%'. Subtypes vary by release.",
+      starterSql: `-- UK city-level divisions
+SELECT name, subtype, country, lat, lon
+FROM divisions_uk
+WHERE subtype ILIKE '%city%'
+   OR subtype ILIKE '%town%'
+ORDER BY name
+LIMIT 40;`
+    },
+    {
+      id: "divisions-raw",
+      theme: "divisions",
+      title: "Divisions: raw bbox filter",
+      text: "Query divisions directly from raw data using bbox overlap.",
+      hint: "The raw view uses bbox struct fields: xmin, xmax, ymin, ymax.",
+      starterSql: `-- Divisions using raw bbox overlap filter (works even if views differ)
+SELECT id,
+       CAST(names.primary AS VARCHAR) AS name,
+       subtype,
+       country,
+       (bbox.ymin + bbox.ymax) / 2.0 AS lat,
+       (bbox.xmin + bbox.xmax) / 2.0 AS lon
+FROM divisions_raw
+WHERE bbox.xmax >= ${UK.west}
+  AND bbox.xmin <= ${UK.east}
+  AND bbox.ymax >= ${UK.south}
+  AND bbox.ymin <= ${UK.north}
+  AND country = 'GB'
+  AND names.primary IS NOT NULL
+LIMIT 40;`
+    },
+
+    // ── Transportation ─────────────────────────────────────────────────────
+    {
+      id: "transport-warmup",
+      theme: "transportation",
+      title: "Transport: UK road segments",
+      text: "Sample UK road segments. This table is large — always bbox-filter first.",
+      hint: "Use segments_uk. The class column indicates motorway, residential, etc.",
+      starterSql: `-- UK road segment sample (bbox pre-filtered)
+SELECT id, road_class, road_surface, lat, lon
+FROM segments_uk
+WHERE road_class IS NOT NULL
+LIMIT 30;`
+    },
+    {
+      id: "transport-motorways",
+      theme: "transportation",
+      title: "Transport: UK motorways",
+      text: "Find motorway segments in the UK.",
+      hint: "Filter road_class = 'motorway'. Segments_uk is already UK-bounded.",
+      starterSql: `-- UK motorway segments
+SELECT id, road_class, road_surface, lat, lon
+FROM segments_uk
+WHERE road_class = 'motorway'
+LIMIT 40;`
+    },
+    {
+      id: "transport-count",
+      theme: "transportation",
+      title: "Transport: road class counts (UK)",
+      text: "How many road segments of each class are in the UK?",
+      hint: "GROUP BY road_class — motorway vs primary vs residential etc.",
+      starterSql: `-- UK road segments counted by class
+SELECT road_class, COUNT(*) AS cnt
+FROM segments_uk
+WHERE road_class IS NOT NULL
+GROUP BY road_class
+ORDER BY cnt DESC
+LIMIT 20;`
+    },
+  ];
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  let db = null;
+  let conn = null;
+  let currentClue = null;
+  let activeTheme = "all";
+
+  // ---------------------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------------------
+  const statusEl       = document.getElementById("status");
+  const resultsMetaEl  = document.getElementById("resultsMeta");
+  const resultsEl      = document.getElementById("results");
+  const sqlEditor      = document.getElementById("sqlEditor");
+  const cluesEl        = document.getElementById("clues");
+  const clueTitleEl    = document.getElementById("currentClueTitle");
+  const clueTextEl     = document.getElementById("currentClueText");
+  const hintEl         = document.getElementById("currentHint");
+
+  // ---------------------------------------------------------------------------
+  // Map setup
+  // ---------------------------------------------------------------------------
+  const map = new maplibregl.Map({
+    container: "map",
+    style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+    center: [-2.5, 54.5],
+    zoom: 4.8
+  });
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+  map.on("load", () => {
+    map.addSource("qpts", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] }
+    });
+    map.addLayer({
+      id: "qpts-layer",
+      type: "circle",
+      source: "qpts",
+      paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4, 12, 8],
+        "circle-color": "#67e8f9",
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#ffffff",
+        "circle-opacity": 0.85
+      }
+    });
+    map.addLayer({
+      id: "qpts-labels",
+      type: "symbol",
+      source: "qpts",
+      layout: {
+        "text-field": ["coalesce", ["get", "label"], ""],
+        "text-size": 11,
+        "text-offset": [0, 1.1],
+        "text-anchor": "top",
+        "text-optional": true
+      },
+      paint: {
+        "text-color": "#e8eefc",
+        "text-halo-color": "#0b1220",
+        "text-halo-width": 1.3
+      }
+    });
+  });
+
+  // Popup on click
+  const popup = new maplibregl.Popup({ closeButton: true, maxWidth: "260px" });
+  map.on("click", "qpts-layer", (e) => {
+    const props = e.features[0].properties;
+    const coords = e.features[0].geometry.coordinates.slice();
+    const rows = Object.entries(props)
+      .filter(([k]) => k !== "label")
+      .map(([k, v]) => `<tr><td style="color:#9fb0d1;padding:2px 6px;">${escHtml(k)}</td><td style="padding:2px 6px;">${escHtml(String(v ?? ""))}</td></tr>`)
+      .join("");
+    popup.setLngLat(coords)
+      .setHTML(`<table style="font-size:11px;border-collapse:collapse;background:#121a2b;color:#e8eefc;">${rows}</table>`)
+      .addTo(map);
+  });
+  map.on("mouseenter", "qpts-layer", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "qpts-layer", () => { map.getCanvas().style.cursor = ""; });
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+  function setStatus(msg, cls = "") {
+    statusEl.textContent = msg;
+    statusEl.className = cls || "";
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function inferLatLon(columns) {
+    const lc = columns.map(c => c.toLowerCase());
+    const latCands = ["lat", "latitude", "y", "ylat"];
+    const lonCands = ["lon", "lng", "longitude", "x", "xlon"];
+    const lat = latCands.map(c => lc.indexOf(c)).find(i => i >= 0);
+    const lon = lonCands.map(c => lc.indexOf(c)).find(i => i >= 0);
+    return {
+      lat: lat !== undefined ? columns[lat] : null,
+      lon: lon !== undefined ? columns[lon] : null
+    };
+  }
+
+  function rowsToTable(rows) {
+    if (!rows || !rows.length) {
+      resultsEl.innerHTML = `<div style="padding:12px; color:var(--muted); font-size:12px;">Query returned 0 rows.</div>`;
+      return;
+    }
+    const cols = Object.keys(rows[0]);
+    const head = `<thead><tr>${cols.map(c => `<th>${escHtml(c)}</th>`).join("")}</tr></thead>`;
+    const body = `<tbody>${rows.map(r =>
+      `<tr>${cols.map(c => `<td>${escHtml(String(r[c] ?? ""))}</td>`).join("")}</tr>`
+    ).join("")}</tbody>`;
+    resultsEl.innerHTML = `<table>${head}${body}</table>`;
+  }
+
+  function plotRows(rows) {
+    if (!rows || !rows.length) return;
+    const cols = Object.keys(rows[0]);
+    const { lat, lon } = inferLatLon(cols);
+    if (!lat || !lon) return;
+    const features = rows
+      .filter(r => Number.isFinite(+r[lat]) && Number.isFinite(+r[lon]))
+      .map(r => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [+r[lon], +r[lat]] },
+        properties: { ...r, label: r.name || r.street || r.id || "" }
+      }));
+    const src = map.getSource("qpts");
+    if (!src) return;
+    src.setData({ type: "FeatureCollection", features });
+    if (features.length === 1) {
+      map.flyTo({ center: features[0].geometry.coordinates, zoom: 14 });
+    } else if (features.length > 1) {
+      const bounds = new maplibregl.LngLatBounds();
+      for (const f of features) bounds.extend(f.geometry.coordinates);
+      map.fitBounds(bounds, { padding: 50, maxZoom: 14 });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DuckDB initialisation
+  // ---------------------------------------------------------------------------
+  async function initializeDuckDB() {
+    setStatus("Initializing DuckDB-WASM… (this may take ~15–30 s on first load)");
+    try {
+      const bundles = duckdb.getJsDelivrBundles();
+      const bundle  = await duckdb.selectBundle(bundles);
+
+      const workerUrl = URL.createObjectURL(
+        new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
+      );
+
+      const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+      db = new duckdb.AsyncDuckDB(logger, new Worker(workerUrl));
+      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+      conn = await db.connect();
+
+      // Extensions
+      await conn.query(`INSTALL httpfs; LOAD httpfs;`);
+      try {
+        await conn.query(`INSTALL spatial; LOAD spatial;`);
+      } catch (e) {
+        console.warn("Spatial extension unavailable:", e.message);
+      }
+
+      setStatus("Creating raw views…");
+
+      // Raw views — lazy, schema-agnostic
+      await conn.query(`
+        CREATE OR REPLACE VIEW places_raw AS
+        SELECT * FROM read_parquet('${URLS.places}', filename=true, hive_partitioning=1);
+      `);
+      await conn.query(`
+        CREATE OR REPLACE VIEW addresses_raw AS
+        SELECT * FROM read_parquet('${URLS.addresses}', filename=true, hive_partitioning=1);
+      `);
+      await conn.query(`
+        CREATE OR REPLACE VIEW buildings_raw AS
+        SELECT * FROM read_parquet('${URLS.buildings}', filename=true, hive_partitioning=1);
+      `);
+      await conn.query(`
+        CREATE OR REPLACE VIEW divisions_raw AS
+        SELECT * FROM read_parquet('${URLS.divisions}', filename=true, hive_partitioning=1);
+      `);
+      await conn.query(`
+        CREATE OR REPLACE VIEW segments_raw AS
+        SELECT * FROM read_parquet('${URLS.segments}', filename=true, hive_partitioning=1);
+      `);
+
+      setStatus("Creating friendly projected views…");
+
+      // ── Places projected view ──────────────────────────────────────────────
+      let placesViewOk = false;
+      try {
+        await conn.query(`
+          CREATE OR REPLACE VIEW places AS
+          SELECT
+            id,
+            CAST(names.primary AS VARCHAR)         AS name,
+            CAST(categories.primary AS VARCHAR)    AS category,
+            CAST(categories.alternate[1] AS VARCHAR) AS subcategory,
+            CAST(context.country AS VARCHAR)       AS country,
+            CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
+            CAST(geometry.coordinates[1] AS DOUBLE) AS lon
+          FROM places_raw
+          WHERE geometry IS NOT NULL;
+        `);
+        placesViewOk = true;
+      } catch (e) {
+        console.warn("places projected view failed (schema may differ):", e.message);
+      }
+      if (!placesViewOk) {
+        // Fallback: keep raw with bbox
+        await conn.query(`
+          CREATE OR REPLACE VIEW places AS
+          SELECT *, null AS name, null AS category, null AS lat, null AS lon
+          FROM places_raw LIMIT 0;
+        `).catch(() => {});
+      }
+
+      // ── Addresses projected view ───────────────────────────────────────────
+      let addressViewOk = false;
+      try {
+        await conn.query(`
+          CREATE OR REPLACE VIEW addresses AS
+          SELECT
+            id,
+            CAST(street AS VARCHAR)   AS street,
+            CAST(postcode AS VARCHAR) AS postcode,
+            CAST(city AS VARCHAR)     AS city,
+            CAST(country AS VARCHAR)  AS country,
+            CAST(lat AS DOUBLE)       AS lat,
+            CAST(lon AS DOUBLE)       AS lon
+          FROM addresses_raw
+          WHERE lat IS NOT NULL AND lon IS NOT NULL;
+        `);
+        addressViewOk = true;
+      } catch (e) {
+        console.warn("addresses v1 projected view failed:", e.message);
+      }
+
+      if (!addressViewOk) {
+        // Try alternative Overture address schema (geometry-based)
+        try {
+          await conn.query(`
+            CREATE OR REPLACE VIEW addresses AS
+            SELECT
+              id,
+              CAST(address_levels[1].value AS VARCHAR) AS street,
+              CAST(postcode AS VARCHAR) AS postcode,
+              CAST(address_levels[2].value AS VARCHAR) AS city,
+              CAST(country AS VARCHAR)  AS country,
+              CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
+              CAST(geometry.coordinates[1] AS DOUBLE) AS lon
+            FROM addresses_raw
+            WHERE geometry IS NOT NULL;
+          `);
+          addressViewOk = true;
+        } catch (e2) {
+          console.warn("addresses v2 projected view also failed:", e2.message);
+        }
+      }
+
+      if (!addressViewOk) {
+        console.warn("No friendly addresses view created; addresses_raw still available.");
+      }
+
+      // ── Buildings projected view ───────────────────────────────────────────
+      let buildingsViewOk = false;
+      try {
+        await conn.query(`
+          CREATE OR REPLACE VIEW buildings AS
+          SELECT
+            id,
+            CAST(names.primary AS VARCHAR) AS name,
+            CAST(height AS DOUBLE)         AS height,
+            CAST(num_floors AS INTEGER)    AS num_floors,
+            CAST(context.country AS VARCHAR) AS country,
+            bbox.xmin AS xmin, bbox.ymin AS ymin,
+            bbox.xmax AS xmax, bbox.ymax AS ymax,
+            (bbox.ymin + bbox.ymax) / 2.0  AS lat,
+            (bbox.xmin + bbox.xmax) / 2.0  AS lon
+          FROM buildings_raw
+          WHERE bbox IS NOT NULL;
+        `);
+        buildingsViewOk = true;
+      } catch (e) {
+        console.warn("buildings projected view failed:", e.message);
+      }
+
+      // ── Divisions projected view ───────────────────────────────────────────
+      let divisionsViewOk = false;
+      try {
+        await conn.query(`
+          CREATE OR REPLACE VIEW divisions AS
+          SELECT
+            id,
+            CAST(names.primary AS VARCHAR)   AS name,
+            CAST(subtype AS VARCHAR)         AS subtype,
+            CAST(country AS VARCHAR)         AS country,
+            bbox.xmin AS xmin, bbox.ymin AS ymin,
+            bbox.xmax AS xmax, bbox.ymax AS ymax,
+            (bbox.ymin + bbox.ymax) / 2.0    AS lat,
+            (bbox.xmin + bbox.xmax) / 2.0    AS lon
+          FROM divisions_raw
+          WHERE bbox IS NOT NULL;
+        `);
+        divisionsViewOk = true;
+      } catch (e) {
+        console.warn("divisions projected view failed:", e.message);
+      }
+
+      // ── Segments projected view ────────────────────────────────────────────
+      let segmentsViewOk = false;
+      try {
+        await conn.query(`
+          CREATE OR REPLACE VIEW segments AS
+          SELECT
+            id,
+            CAST(road AS VARCHAR)         AS road_class,
+            CAST(surface AS VARCHAR)      AS road_surface,
+            bbox.xmin AS xmin, bbox.ymin AS ymin,
+            bbox.xmax AS xmax, bbox.ymax AS ymax,
+            (bbox.ymin + bbox.ymax) / 2.0  AS lat,
+            (bbox.xmin + bbox.xmax) / 2.0  AS lon
+          FROM segments_raw
+          WHERE bbox IS NOT NULL;
+        `);
+        segmentsViewOk = true;
+      } catch (e) {
+        console.warn("segments v1 projected view failed:", e.message);
+      }
+
+      if (!segmentsViewOk) {
+        try {
+          await conn.query(`
+            CREATE OR REPLACE VIEW segments AS
+            SELECT
+              id,
+              CAST(class AS VARCHAR)        AS road_class,
+              CAST(surface AS VARCHAR)      AS road_surface,
+              bbox.xmin AS xmin, bbox.ymin AS ymin,
+              bbox.xmax AS xmax, bbox.ymax AS ymax,
+              (bbox.ymin + bbox.ymax) / 2.0  AS lat,
+              (bbox.xmin + bbox.xmax) / 2.0  AS lon
+            FROM segments_raw
+            WHERE bbox IS NOT NULL;
+          `);
+          segmentsViewOk = true;
+        } catch (e2) {
+          console.warn("segments v2 projected view also failed:", e2.message);
+        }
+      }
+
+      setStatus("Creating UK bbox-filtered views…");
+
+      // ── UK filtered views ──────────────────────────────────────────────────
+      if (placesViewOk) {
+        await conn.query(`
+          CREATE OR REPLACE VIEW places_uk AS
+          SELECT * FROM places
+          WHERE lon BETWEEN ${UK.west} AND ${UK.east}
+            AND lat BETWEEN ${UK.south} AND ${UK.north};
+        `);
+      }
+
+      if (addressViewOk) {
+        await conn.query(`
+          CREATE OR REPLACE VIEW addresses_uk AS
+          SELECT * FROM addresses
+          WHERE lon BETWEEN ${UK.west} AND ${UK.east}
+            AND lat BETWEEN ${UK.south} AND ${UK.north};
+        `);
+      }
+
+      if (buildingsViewOk) {
+        await conn.query(`
+          CREATE OR REPLACE VIEW buildings_uk AS
+          SELECT * FROM buildings
+          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
+            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+        `);
+      }
+
+      if (divisionsViewOk) {
+        await conn.query(`
+          CREATE OR REPLACE VIEW divisions_uk AS
+          SELECT * FROM divisions
+          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
+            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+        `);
+      }
+
+      if (segmentsViewOk) {
+        await conn.query(`
+          CREATE OR REPLACE VIEW segments_uk AS
+          SELECT * FROM segments
+          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
+            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+        `);
+      }
+
+      const viewSummary = [
+        placesViewOk    ? "places_uk ✓"    : "places_uk ✗ (use places_raw)",
+        addressViewOk   ? "addresses_uk ✓" : "addresses_uk ✗ (use addresses_raw)",
+        buildingsViewOk ? "buildings_uk ✓" : "buildings_uk ✗ (use buildings_raw)",
+        divisionsViewOk ? "divisions_uk ✓" : "divisions_uk ✗ (use divisions_raw)",
+        segmentsViewOk  ? "segments_uk ✓"  : "segments_uk ✗ (use segments_raw)",
+      ].join("  |  ");
+
+      setStatus(`DuckDB ready — ${viewSummary}`, "ok");
+    } catch (err) {
+      console.error("DuckDB init error:", err);
+      setStatus(`Initialization failed: ${err.message}`, "err");
+      db = null; conn = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Run SQL
+  // ---------------------------------------------------------------------------
+  async function runSql() {
+    if (!conn) {
+      setStatus("Initialize DuckDB first (click ⚡ Init DuckDB).", "err");
+      return;
+    }
+    const sql = sqlEditor.value.trim();
+    if (!sql || sql.startsWith("--")) {
+      setStatus("No SQL to run (editor is empty or only comments).", "err");
+      return;
+    }
+    const t0 = performance.now();
+    try {
+      setStatus("Running query…");
+      resultsMetaEl.textContent = "Running…";
+      resultsEl.innerHTML = "";
+      const result = await conn.query(sql);
+      const rows = result.toArray().map(r => r.toJSON());
+      const ms = (performance.now() - t0).toFixed(1);
+      rowsToTable(rows);
+      plotRows(rows);
+      resultsMetaEl.textContent = `${rows.length} row(s) · ${ms} ms`;
+      setStatus("Query succeeded.", "ok");
+    } catch (err) {
+      console.error("Query error:", err);
+      resultsEl.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12px; white-space:pre-wrap;">${escHtml(err.message)}</div>`;
+      resultsMetaEl.textContent = "Query failed.";
+      setStatus(`Query failed: ${err.message}`, "err");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Clue rendering & selection
+  // ---------------------------------------------------------------------------
+  function renderClues() {
+    cluesEl.innerHTML = "";
+    const filtered = activeTheme === "all"
+      ? clues
+      : clues.filter(c => c.theme === activeTheme);
+    for (const clue of filtered) {
+      const div = document.createElement("div");
+      div.className = "clue" + (currentClue?.id === clue.id ? " active" : "");
+      div.innerHTML = `<h4>${escHtml(clue.title)}</h4><p>${escHtml(clue.text)}</p>
+        <span class="theme-tag">${escHtml(clue.theme)}</span>`;
+      div.addEventListener("click", () => selectClue(clue));
+      cluesEl.appendChild(div);
+    }
+  }
+
+  function selectClue(clue) {
+    currentClue = clue;
+    clueTitleEl.textContent = clue.title;
+    clueTextEl.textContent  = clue.text;
+    hintEl.style.display    = "none";
+    hintEl.textContent      = "";
+    renderClues();
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI actions
+  // ---------------------------------------------------------------------------
+  function showHint() {
+    if (!currentClue) {
+      alert("Select a clue first.");
+      return;
+    }
+    hintEl.style.display = "block";
+    hintEl.textContent   = currentClue.hint;
+  }
+
+  function insertStarterSql() {
+    if (!currentClue) {
+      alert("Select a clue first.");
+      return;
+    }
+    sqlEditor.value = currentClue.starterSql;
+  }
+
+  function insertBboxTemplate() {
+    sqlEditor.value =
+`-- UK bounding box template — adapt to whichever table you need
+WITH uk AS (
+  SELECT
+    ${UK.west}  AS west,
+    ${UK.south} AS south,
+    ${UK.east}  AS east,
+    ${UK.north} AS north
+)
+SELECT p.name, p.category, p.lat, p.lon
+FROM places uk
+WHERE p.lon BETWEEN uk.west AND uk.east
+  AND p.lat BETWEEN uk.south AND uk.north
+LIMIT 50;
+
+-- For object bbox tables (buildings, divisions, segments):
+-- WHERE bbox.xmax >= uk.west  AND bbox.xmin <= uk.east
+--   AND bbox.ymax >= uk.south AND bbox.ymin <= uk.north`;
+  }
+
+  function clearMap() {
+    const src = map.getSource("qpts");
+    if (src) src.setData({ type: "FeatureCollection", features: [] });
+    popup.remove();
+    resultsMetaEl.textContent = "Map cleared.";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Theme filter buttons
+  // ---------------------------------------------------------------------------
+  document.querySelectorAll("#themeFilter button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#themeFilter button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      activeTheme = btn.dataset.theme;
+      renderClues();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Toolbar event listeners
+  // ---------------------------------------------------------------------------
+  document.getElementById("initBtn").addEventListener("click", initializeDuckDB);
+  document.getElementById("runBtn").addEventListener("click", runSql);
+  document.getElementById("hintBtn").addEventListener("click", showHint);
+  document.getElementById("sampleBtn").addEventListener("click", insertStarterSql);
+  document.getElementById("clearMapBtn").addEventListener("click", clearMap);
+  document.getElementById("bboxSnippetBtn").addEventListener("click", insertBboxTemplate);
+
+  // Ctrl/Cmd+Enter to run
+  sqlEditor.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      runSql();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------------
+  renderClues();
+  selectClue(clues.find(c => c.id === "places-warmup"));
+</script>
+</body>
+</html>
