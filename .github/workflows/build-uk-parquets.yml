@@ -74,6 +74,9 @@ jobs:
               SET s3_use_ssl=true;
               SET s3_access_key_id='';
               SET s3_secret_access_key='';
+              SET temp_directory='/mnt/tmp';
+              SET memory_limit='14GB';
+              SET threads=2;
               -- Overture source files are Hilbert-sorted against a global (world) extent.
               -- We re-sort against the UK extent so that row groups cluster tightly
               -- within UK sub-regions, letting DuckDB-WASM skip far more row groups
