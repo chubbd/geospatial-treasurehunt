@@ -318,37 +318,42 @@
   // ---------------------------------------------------------------------------
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  // Overture Maps data via Azure Blob Storage (CORS-enabled, browser-friendly).
-  // DuckDB-WASM cannot expand S3/HTTPS glob wildcards, so we use Azure's public
-  // List Blobs REST API at init time to discover the exact parquet file URLs and
-  // pass them as an explicit array to read_parquet([...]).
-  const OVERTURE_AZURE_CONTAINER = "https://overturemapswestus2.blob.core.windows.net/release";
-  const OVERTURE_RELEASE         = "2025-07-23.0";
+  // Overture Maps data via S3 HTTPS (CORS is open on the public bucket — proven
+  // by the original error which was a 404 HTTP response, not a CORS block).
+  // DuckDB-WASM cannot expand glob wildcards over HTTPS, so we use the S3
+  // ListObjectsV2 XML API in JS to discover the exact parquet file keys and pass
+  // them as an explicit URL array to read_parquet([...]).
+  const OVERTURE_S3_BUCKET = "overturemaps-us-west-2";
+  const OVERTURE_S3_BASE   = `https://${OVERTURE_S3_BUCKET}.s3.amazonaws.com`;
+  const OVERTURE_RELEASE   = "2025-07-23.0";
 
   const OVERTURE_PREFIXES = {
-    places:       `${OVERTURE_RELEASE}/theme=places/type=place/`,
-    addresses:    `${OVERTURE_RELEASE}/theme=addresses/type=address/`,
-    buildings:    `${OVERTURE_RELEASE}/theme=buildings/type=building/`,
-    divisions:    `${OVERTURE_RELEASE}/theme=divisions/type=division/`,
-    divisionAreas:`${OVERTURE_RELEASE}/theme=divisions/type=division_area/`,
-    segments:     `${OVERTURE_RELEASE}/theme=transportation/type=segment/`,
+    places:       `release/${OVERTURE_RELEASE}/theme=places/type=place/`,
+    addresses:    `release/${OVERTURE_RELEASE}/theme=addresses/type=address/`,
+    buildings:    `release/${OVERTURE_RELEASE}/theme=buildings/type=building/`,
+    divisions:    `release/${OVERTURE_RELEASE}/theme=divisions/type=division/`,
+    divisionAreas:`release/${OVERTURE_RELEASE}/theme=divisions/type=division_area/`,
+    segments:     `release/${OVERTURE_RELEASE}/theme=transportation/type=segment/`,
   };
 
-  // Fetch the list of parquet blob URLs for a given theme prefix.
-  async function listAzureBlobs(prefix) {
+  // Use the S3 ListObjectsV2 XML API to discover parquet file keys for a prefix.
+  // S3 CORS on the public Overture bucket allows GET (including list requests).
+  async function listS3Objects(prefix) {
     const urls = [];
-    let marker = "";
+    let continuationToken = null;
     do {
-      const params = new URLSearchParams({ restype: "container", comp: "list", prefix });
-      if (marker) params.set("marker", marker);
-      const resp = await fetch(`${OVERTURE_AZURE_CONTAINER}?${params}`);
-      if (!resp.ok) throw new Error(`Blob list HTTP ${resp.status} for prefix: ${prefix}`);
+      const params = new URLSearchParams({ "list-type": "2", prefix, "max-keys": "1000" });
+      if (continuationToken) params.set("continuation-token", continuationToken);
+      const resp = await fetch(`${OVERTURE_S3_BASE}/?${params}`);
+      if (!resp.ok) throw new Error(`S3 list HTTP ${resp.status} for prefix: ${prefix}`);
       const doc = new DOMParser().parseFromString(await resp.text(), "text/xml");
-      doc.querySelectorAll("Blob > Name").forEach(n => {
-        urls.push(`${OVERTURE_AZURE_CONTAINER}/${n.textContent}`);
+      doc.querySelectorAll("Contents > Key").forEach(k => {
+        if (k.textContent.endsWith(".parquet")) {
+          urls.push(`${OVERTURE_S3_BASE}/${k.textContent}`);
+        }
       });
-      marker = doc.querySelector("NextMarker")?.textContent ?? "";
-    } while (marker);
+      continuationToken = doc.querySelector("NextContinuationToken")?.textContent ?? null;
+    } while (continuationToken);
     if (!urls.length) throw new Error(`No parquet files found for prefix: ${prefix}`);
     return urls;
   }
@@ -837,16 +842,16 @@ LIMIT 20;`
       await conn.query(`INSTALL httpfs; LOAD httpfs;`);
       await conn.query(`INSTALL spatial; LOAD spatial;`);
 
-      // Discover parquet files via Azure List Blobs API (DuckDB-WASM cannot
-      // expand glob wildcards over HTTPS, so we resolve them in JS first).
-      setStatus("Discovering data files via Azure…");
+      // Discover parquet files via the S3 ListObjectsV2 XML API (DuckDB-WASM
+      // cannot expand glob wildcards over HTTPS, so we resolve them in JS first).
+      setStatus("Discovering data files via S3…");
       const [placesFiles, addressFiles, buildingFiles, divisionFiles, segmentFiles] =
         await Promise.all([
-          listAzureBlobs(OVERTURE_PREFIXES.places),
-          listAzureBlobs(OVERTURE_PREFIXES.addresses),
-          listAzureBlobs(OVERTURE_PREFIXES.buildings),
-          listAzureBlobs(OVERTURE_PREFIXES.divisions),
-          listAzureBlobs(OVERTURE_PREFIXES.segments),
+          listS3Objects(OVERTURE_PREFIXES.places),
+          listS3Objects(OVERTURE_PREFIXES.addresses),
+          listS3Objects(OVERTURE_PREFIXES.buildings),
+          listS3Objects(OVERTURE_PREFIXES.divisions),
+          listS3Objects(OVERTURE_PREFIXES.segments),
         ]);
 
       setStatus("Creating raw views…");
