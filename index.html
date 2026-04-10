@@ -318,50 +318,13 @@
   // ---------------------------------------------------------------------------
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  // Overture Maps data via S3 HTTPS (CORS is open on the public bucket — proven
-  // by the original error which was a 404 HTTP response, not a CORS block).
-  // DuckDB-WASM cannot expand glob wildcards over HTTPS, so we use the S3
-  // ListObjectsV2 XML API in JS to discover the exact parquet file keys and pass
-  // them as an explicit URL array to read_parquet([...]).
+  // Overture Maps public S3 bucket (us-west-2).  Only the most recent two
+  // monthly releases are retained — always use the latest release tag.
+  // The httpfs extension (built into the DuckDB-WASM EH bundle) handles S3
+  // listing and file reads natively, so no JS-side fetch is needed.
   const OVERTURE_S3_BUCKET = "overturemaps-us-west-2";
-  const OVERTURE_S3_BASE   = `https://${OVERTURE_S3_BUCKET}.s3.amazonaws.com`;
-  const OVERTURE_RELEASE   = "2025-07-23.0";
-
-  const OVERTURE_PREFIXES = {
-    places:       `release/${OVERTURE_RELEASE}/theme=places/type=place/`,
-    addresses:    `release/${OVERTURE_RELEASE}/theme=addresses/type=address/`,
-    buildings:    `release/${OVERTURE_RELEASE}/theme=buildings/type=building/`,
-    divisions:    `release/${OVERTURE_RELEASE}/theme=divisions/type=division/`,
-    divisionAreas:`release/${OVERTURE_RELEASE}/theme=divisions/type=division_area/`,
-    segments:     `release/${OVERTURE_RELEASE}/theme=transportation/type=segment/`,
-  };
-
-  // Use the S3 ListObjectsV2 XML API to discover parquet file keys for a prefix.
-  // S3 CORS on the public Overture bucket allows GET (including list requests).
-  async function listS3Objects(prefix) {
-    const urls = [];
-    let continuationToken = null;
-    do {
-      const params = new URLSearchParams({ "list-type": "2", prefix, "max-keys": "1000" });
-      if (continuationToken) params.set("continuation-token", continuationToken);
-      const resp = await fetch(`${OVERTURE_S3_BASE}/?${params}`);
-      if (!resp.ok) throw new Error(`S3 list HTTP ${resp.status} for prefix: ${prefix}`);
-      const doc = new DOMParser().parseFromString(await resp.text(), "text/xml");
-      doc.querySelectorAll("Contents > Key").forEach(k => {
-        if (k.textContent.endsWith(".parquet")) {
-          urls.push(`${OVERTURE_S3_BASE}/${k.textContent}`);
-        }
-      });
-      continuationToken = doc.querySelector("NextContinuationToken")?.textContent ?? null;
-    } while (continuationToken);
-    if (!urls.length) throw new Error(`No parquet files found for prefix: ${prefix}`);
-    return urls;
-  }
-
-  // Format an array of URLs for use inside a DuckDB read_parquet([...]) call.
-  function urlArraySql(urls) {
-    return "[" + urls.map(u => `'${u}'`).join(", ") + "]";
-  }
+  const OVERTURE_RELEASE   = "2026-03-18.0";
+  const OVERTURE_BASE      = `s3://${OVERTURE_S3_BUCKET}/release/${OVERTURE_RELEASE}`;
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -490,7 +453,7 @@ LIMIT 25;`
       text: "Find addresses in a specific UK postcode area (e.g. EC1).",
       hint: "Filter postcode with ILIKE 'EC1%'.",
       starterSql: `-- Addresses in the EC1 London postcode district
-SELECT street, postcode, city, lat, lon
+SELECT street, postcode, lat, lon
 FROM addresses_uk
 WHERE postcode ILIKE 'EC1%'
 LIMIT 40;`
@@ -498,14 +461,14 @@ LIMIT 40;`
     {
       id: "addresses-city",
       theme: "addresses",
-      title: "Addresses: count by city",
-      text: "Which cities have the most Overture addresses in the UK?",
-      hint: "GROUP BY city and ORDER BY count descending.",
-      starterSql: `-- UK cities by address count
-SELECT city, COUNT(*) AS cnt
+      title: "Addresses: count by postcode area",
+      text: "Which postcode areas have the most Overture addresses in the UK?",
+      hint: "Use LEFT(postcode, 2) to extract the postcode district prefix.",
+      starterSql: `-- UK postcode areas by address count
+SELECT LEFT(postcode, 2) AS postcode_area, COUNT(*) AS cnt
 FROM addresses_uk
-WHERE city IS NOT NULL
-GROUP BY city
+WHERE postcode IS NOT NULL
+GROUP BY postcode_area
 ORDER BY cnt DESC
 LIMIT 25;`
     },
@@ -835,96 +798,122 @@ LIMIT 20;`
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
 
-      // Extensions — both are required:
-      //   httpfs  : remote HTTPS parquet reading (Overture data via Azure)
-      //   spatial : geometry decoding + ST_* functions
-      setStatus("Loading extensions…");
-      await conn.query(`INSTALL httpfs; LOAD httpfs;`);
-      await conn.query(`INSTALL spatial; LOAD spatial;`);
+      // httpfs is compiled into the DuckDB-WASM EH bundle — LOAD only, no INSTALL.
+      // INSTALL would try to download a binary from extensions.duckdb.org and
+      // fail with "Failed to fetch" in browser environments.
+      setStatus("Loading httpfs extension…");
+      await conn.query(`LOAD httpfs;`);
 
-      // Discover parquet files via the S3 ListObjectsV2 XML API (DuckDB-WASM
-      // cannot expand glob wildcards over HTTPS, so we resolve them in JS first).
-      setStatus("Discovering data files via S3…");
-      const [placesFiles, addressFiles, buildingFiles, divisionFiles, segmentFiles] =
-        await Promise.all([
-          listS3Objects(OVERTURE_PREFIXES.places),
-          listS3Objects(OVERTURE_PREFIXES.addresses),
-          listS3Objects(OVERTURE_PREFIXES.buildings),
-          listS3Objects(OVERTURE_PREFIXES.divisions),
-          listS3Objects(OVERTURE_PREFIXES.segments),
-        ]);
+      // Configure anonymous read access to the public Overture S3 bucket.
+      // DuckDB's httpfs handles S3 listing and file reads natively — no JS
+      // fetch() calls needed, so browser CORS is not an issue.
+      await conn.query(`
+        SET s3_region='us-west-2';
+        SET s3_use_ssl=true;
+        SET s3_access_key_id='';
+        SET s3_secret_access_key='';
+      `);
 
+      // spatial is optional — ST_* functions need it but the projected views
+      // below use only bbox arithmetic, so init succeeds either way.
+      try {
+        await conn.query(`LOAD spatial;`);
+      } catch (_) {
+        console.warn("spatial extension not available; ST_* functions will not work");
+      }
+
+      // Raw views — DuckDB's httpfs expands the glob over S3 internally.
       setStatus("Creating raw views…");
-
-      // Raw views — lazy, schema-agnostic
       await conn.query(`
         CREATE OR REPLACE VIEW places_raw AS
-        SELECT * FROM read_parquet(${urlArraySql(placesFiles)}, filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(
+          '${OVERTURE_BASE}/theme=places/type=place/*.parquet',
+          hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW addresses_raw AS
-        SELECT * FROM read_parquet(${urlArraySql(addressFiles)}, filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(
+          '${OVERTURE_BASE}/theme=addresses/type=address/*.parquet',
+          hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW buildings_raw AS
-        SELECT * FROM read_parquet(${urlArraySql(buildingFiles)}, filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(
+          '${OVERTURE_BASE}/theme=buildings/type=building/*.parquet',
+          hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW divisions_raw AS
-        SELECT * FROM read_parquet(${urlArraySql(divisionFiles)}, filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(
+          '${OVERTURE_BASE}/theme=divisions/type=division/*.parquet',
+          hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW segments_raw AS
-        SELECT * FROM read_parquet(${urlArraySql(segmentFiles)}, filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(
+          '${OVERTURE_BASE}/theme=transportation/type=segment/*.parquet',
+          hive_partitioning=1);
       `);
 
       setStatus("Creating friendly projected views…");
 
       // ── Places projected view ──────────────────────────────────────────────
+      // Geometry is GeoParquet (WKB) since the 2026 releases; use bbox centroid
+      // for lat/lon.  categories.primary is deprecated — use basic_category.
       let placesViewOk = false;
       try {
         await conn.query(`
           CREATE OR REPLACE VIEW places AS
           SELECT
             id,
-            CAST(names.primary AS VARCHAR)         AS name,
-            CAST(categories.primary AS VARCHAR)    AS category,
-            CAST(categories.alternate[1] AS VARCHAR) AS subcategory,
-            CAST(context.country AS VARCHAR)       AS country,
-            -- DuckDB lists are 1-indexed; GeoJSON Point coordinates = [lon, lat]
-            -- so [1] = longitude, [2] = latitude
-            CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
-            CAST(geometry.coordinates[1] AS DOUBLE) AS lon
-          WHERE geometry IS NOT NULL;
+            CAST(names.primary AS VARCHAR)   AS name,
+            CAST(basic_category AS VARCHAR)  AS category,
+            CAST(country AS VARCHAR)         AS country,
+            bbox.ymin                        AS lat,
+            bbox.xmin                        AS lon
+          FROM places_raw
+          WHERE bbox IS NOT NULL;
         `);
         placesViewOk = true;
       } catch (e) {
-        console.warn("places projected view failed (schema may differ):", e.message);
+        console.warn("places v1 projected view failed:", e.message);
       }
       if (!placesViewOk) {
-        // Fallback: keep raw with bbox
-        await conn.query(`
-          CREATE OR REPLACE VIEW places AS
-          SELECT *, null AS name, null AS category, null AS lat, null AS lon
-          FROM places_raw LIMIT 0;
-        `).catch(() => {});
+        // Fallback for any remaining schema variation
+        try {
+          await conn.query(`
+            CREATE OR REPLACE VIEW places AS
+            SELECT
+              id,
+              CAST(names.primary AS VARCHAR)        AS name,
+              CAST(categories.primary AS VARCHAR)   AS category,
+              CAST(country AS VARCHAR)              AS country,
+              bbox.ymin                             AS lat,
+              bbox.xmin                             AS lon
+            FROM places_raw
+            WHERE bbox IS NOT NULL;
+          `);
+          placesViewOk = true;
+        } catch (e2) {
+          console.warn("places v2 projected view also failed:", e2.message);
+        }
       }
 
       // ── Addresses projected view ───────────────────────────────────────────
+      // 2026 schema: postalcode (not postcode), geometry is WKB — use bbox.
       let addressViewOk = false;
       try {
         await conn.query(`
           CREATE OR REPLACE VIEW addresses AS
           SELECT
             id,
-            CAST(street AS VARCHAR)   AS street,
-            CAST(postcode AS VARCHAR) AS postcode,
-            CAST(city AS VARCHAR)     AS city,
-            CAST(country AS VARCHAR)  AS country,
-            CAST(lat AS DOUBLE)       AS lat,
-            CAST(lon AS DOUBLE)       AS lon
+            CAST(street AS VARCHAR)    AS street,
+            CAST(postalcode AS VARCHAR) AS postcode,
+            CAST(country AS VARCHAR)   AS country,
+            bbox.ymin                  AS lat,
+            bbox.xmin                  AS lon
           FROM addresses_raw
-          WHERE lat IS NOT NULL AND lon IS NOT NULL;
+          WHERE bbox IS NOT NULL;
         `);
         addressViewOk = true;
       } catch (e) {
@@ -932,21 +921,18 @@ LIMIT 20;`
       }
 
       if (!addressViewOk) {
-        // Try alternative Overture address schema (geometry-based)
         try {
           await conn.query(`
             CREATE OR REPLACE VIEW addresses AS
             SELECT
               id,
               CAST(address_levels[1].value AS VARCHAR) AS street,
-              CAST(postcode AS VARCHAR) AS postcode,
-              CAST(address_levels[2].value AS VARCHAR) AS city,
-              CAST(country AS VARCHAR)  AS country,
-              -- DuckDB lists are 1-indexed; GeoJSON Point coordinates = [lon, lat]
-              -- so [1] = longitude, [2] = latitude
-              CAST(geometry.coordinates[2] AS DOUBLE) AS lat,
-              CAST(geometry.coordinates[1] AS DOUBLE) AS lon
-            WHERE geometry IS NOT NULL;
+              CAST(postalcode AS VARCHAR)              AS postcode,
+              CAST(country AS VARCHAR)                 AS country,
+              bbox.ymin                                AS lat,
+              bbox.xmin                                AS lon
+            FROM addresses_raw
+            WHERE bbox IS NOT NULL;
           `);
           addressViewOk = true;
         } catch (e2) {
@@ -968,7 +954,7 @@ LIMIT 20;`
             CAST(names.primary AS VARCHAR) AS name,
             CAST(height AS DOUBLE)         AS height,
             CAST(num_floors AS INTEGER)    AS num_floors,
-            CAST(context.country AS VARCHAR) AS country,
+            CAST(country AS VARCHAR)       AS country,
             bbox.xmin AS xmin, bbox.ymin AS ymin,
             bbox.xmax AS xmax, bbox.ymax AS ymax,
             (bbox.ymin + bbox.ymax) / 2.0  AS lat,
@@ -1010,7 +996,7 @@ LIMIT 20;`
           CREATE OR REPLACE VIEW segments AS
           SELECT
             id,
-            CAST(road AS VARCHAR)         AS road_class,
+            CAST(class AS VARCHAR)        AS road_class,
             CAST(surface AS VARCHAR)      AS road_surface,
             bbox.xmin AS xmin, bbox.ymin AS ymin,
             bbox.xmax AS xmax, bbox.ymax AS ymax,
@@ -1021,28 +1007,7 @@ LIMIT 20;`
         `);
         segmentsViewOk = true;
       } catch (e) {
-        console.warn("segments v1 projected view failed:", e.message);
-      }
-
-      if (!segmentsViewOk) {
-        try {
-          await conn.query(`
-            CREATE OR REPLACE VIEW segments AS
-            SELECT
-              id,
-              CAST(class AS VARCHAR)        AS road_class,
-              CAST(surface AS VARCHAR)      AS road_surface,
-              bbox.xmin AS xmin, bbox.ymin AS ymin,
-              bbox.xmax AS xmax, bbox.ymax AS ymax,
-              (bbox.ymin + bbox.ymax) / 2.0  AS lat,
-              (bbox.xmin + bbox.xmax) / 2.0  AS lon
-            FROM segments_raw
-            WHERE bbox IS NOT NULL;
-          `);
-          segmentsViewOk = true;
-        } catch (e2) {
-          console.warn("segments v2 projected view also failed:", e2.message);
-        }
+        console.warn("segments projected view failed:", e.message);
       }
 
       setStatus("Creating UK bbox-filtered views…");
