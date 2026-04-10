@@ -273,16 +273,11 @@
       Opening via <code class="inline">file://</code> will fail (SharedArrayBuffer / COOP headers required).
     </div>
     <div class="muted">
-      Query remote <strong>Overture Maps</strong> Parquet data from public S3 using
-      <strong>DuckDB-WASM</strong> — all in the browser, no backend needed.
-    </div>
-    <div class="bbox-box">
-      <div><strong>🇬🇧 UK Bounding Box (use this for performance!)</strong></div>
-      <div>west&nbsp;&nbsp;= <code class="inline">-8.75</code> &nbsp; east&nbsp;&nbsp;= <code class="inline">1.90</code></div>
-      <div>south = <code class="inline">49.80</code> &nbsp; north = <code class="inline">60.95</code></div>
-      <div style="margin-top:7px; color: #fbbf24aa; font-size:11px;">
-        Always prefilter to the UK bbox — it drastically reduces the Parquet row groups scanned.
-      </div>
+      Query UK-pre-filtered <strong>Overture Maps</strong> Parquet files served from
+      <strong>GitHub Releases</strong> using <strong>DuckDB-WASM</strong> — all in the browser,
+      no backend needed. Data is pre-filtered to the UK bounding box, so each theme is a
+      single Parquet file instead of hundreds of S3 partitions — init takes ~2–5 s
+      instead of ~20–30 s.
     </div>
   </div>
 
@@ -309,7 +304,7 @@
   <div id="clues"></div>
 
   <div class="footer-note">
-    Tip: run <em>Initialize DuckDB</em> first, then select a clue and click <em>Insert Demo SQL</em>.
+    Tip: run <em>Initialize DuckDB</em> first, then select a clue and click <em>Insert Demo SQL</em>. Data is pre-filtered to the UK.
   </div>
 </aside>
 
@@ -332,8 +327,7 @@
     </div>
     <section id="editorPane" class="tab-active">
       <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first, then select a clue and click "📋 Insert Demo SQL".
--- Always prefilter to the UK bounding box for performance:
---   lon BETWEEN -8.75 AND 1.90  AND  lat BETWEEN 49.80 AND 60.95
+-- Data is pre-filtered to the UK — no global bbox filter needed.
 </textarea>
     </section>
 
@@ -357,13 +351,15 @@
   // ---------------------------------------------------------------------------
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  // Overture Maps public S3 bucket (us-west-2).  Only the most recent two
-  // monthly releases are retained — always use the latest release tag.
-  // The httpfs extension (built into the DuckDB-WASM EH bundle) handles S3
-  // listing and file reads natively, so no JS-side fetch is needed.
-  const OVERTURE_S3_BUCKET = "overturemaps-us-west-2";
-  const OVERTURE_RELEASE   = "2026-03-18.0";
-  const OVERTURE_BASE      = `s3://${OVERTURE_S3_BUCKET}/release/${OVERTURE_RELEASE}`;
+  // UK-filtered Parquet files are pre-built by the "Build UK Overture Parquets"
+  // workflow and uploaded as GitHub Release assets.  Each theme is a single file,
+  // so DuckDB reads one Parquet footer instead of 200+ S3 partition footers —
+  // cutting browser init from ~20–30 s down to ~2–5 s.
+  //
+  // To update data: run the workflow with the new Overture release tag, then
+  // update OVERTURE_RELEASE below to match.
+  const OVERTURE_RELEASE = "2026-03-18.0";
+  const RELEASE_BASE     = `https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-${OVERTURE_RELEASE}`;
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -521,10 +517,7 @@ LIMIT 25;`
 DESCRIBE addresses_raw;
 
 -- After inspecting, try:
--- SELECT * FROM addresses_raw
--- WHERE bbox.xmax >= -8.75 AND bbox.xmin <= 1.90
---   AND bbox.ymax >= 49.80 AND bbox.ymin <= 60.95
--- LIMIT 20;`
+-- SELECT * FROM addresses_raw LIMIT 20;`
     },
 
     // ── Buildings ──────────────────────────────────────────────────────────
@@ -613,9 +606,9 @@ LIMIT 40;`
       id: "divisions-raw",
       theme: "divisions",
       title: "Divisions: raw bbox filter",
-      text: "Query divisions directly from raw data using bbox overlap.",
-      hint: "The raw view uses bbox struct fields: xmin, xmax, ymin, ymax.",
-      starterSql: `-- Divisions using raw bbox overlap filter (works even if views differ)
+      text: "Query divisions directly from raw data using bbox struct fields.",
+      hint: "The raw view uses bbox struct fields: xmin, xmax, ymin, ymax. Data is already UK-filtered.",
+      starterSql: `-- Divisions using raw bbox struct fields (data is pre-filtered to UK)
 SELECT id,
        CAST(names.primary AS VARCHAR) AS name,
        subtype,
@@ -623,11 +616,7 @@ SELECT id,
        (bbox.ymin + bbox.ymax) / 2.0 AS lat,
        (bbox.xmin + bbox.xmax) / 2.0 AS lon
 FROM divisions_raw
-WHERE bbox.xmax >= ${UK.west}
-  AND bbox.xmin <= ${UK.east}
-  AND bbox.ymax >= ${UK.south}
-  AND bbox.ymin <= ${UK.north}
-  AND country = 'GB'
+WHERE country = 'GB'
   AND names.primary IS NOT NULL
 LIMIT 40;`
     },
@@ -823,7 +812,7 @@ LIMIT 20;`
   // DuckDB initialisation
   // ---------------------------------------------------------------------------
   async function initializeDuckDB() {
-    setStatus("Initializing DuckDB-WASM… (this may take ~15–30 s on first load)");
+    setStatus("Initializing DuckDB-WASM… (first load may take ~5–10 s)");
     try {
       const bundles = duckdb.getJsDelivrBundles();
       const bundle  = await duckdb.selectBundle(bundles);
@@ -843,16 +832,6 @@ LIMIT 20;`
       setStatus("Loading httpfs extension…");
       await conn.query(`LOAD httpfs;`);
 
-      // Configure anonymous read access to the public Overture S3 bucket.
-      // DuckDB's httpfs handles S3 listing and file reads natively — no JS
-      // fetch() calls needed, so browser CORS is not an issue.
-      await conn.query(`
-        SET s3_region='us-west-2';
-        SET s3_use_ssl=true;
-        SET s3_access_key_id='';
-        SET s3_secret_access_key='';
-      `);
-
       // spatial is optional — ST_* functions need it but the projected views
       // below use only bbox arithmetic, so init succeeds either way.
       try {
@@ -861,37 +840,29 @@ LIMIT 20;`
         console.warn("spatial extension not available; ST_* functions will not work");
       }
 
-      // Raw views — DuckDB's httpfs expands the glob over S3 internally.
-      setStatus("Creating raw views…");
+      // Raw views — each points at a single pre-filtered UK Parquet served from
+      // GitHub Releases.  DuckDB reads one file footer (one HTTP round trip)
+      // rather than hundreds of S3 partition footers, so initialisation is fast.
+      setStatus("Creating raw views from GitHub Release assets…");
       await conn.query(`
         CREATE OR REPLACE VIEW places_raw AS
-        SELECT * FROM read_parquet(
-          '${OVERTURE_BASE}/theme=places/type=place/*.parquet',
-          hive_partitioning=1);
+        SELECT * FROM read_parquet('${RELEASE_BASE}/places_uk.parquet');
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW addresses_raw AS
-        SELECT * FROM read_parquet(
-          '${OVERTURE_BASE}/theme=addresses/type=address/*.parquet',
-          hive_partitioning=1);
+        SELECT * FROM read_parquet('${RELEASE_BASE}/addresses_uk.parquet');
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW buildings_raw AS
-        SELECT * FROM read_parquet(
-          '${OVERTURE_BASE}/theme=buildings/type=building/*.parquet',
-          hive_partitioning=1);
+        SELECT * FROM read_parquet('${RELEASE_BASE}/buildings_uk.parquet');
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW divisions_raw AS
-        SELECT * FROM read_parquet(
-          '${OVERTURE_BASE}/theme=divisions/type=division/*.parquet',
-          hive_partitioning=1);
+        SELECT * FROM read_parquet('${RELEASE_BASE}/divisions_uk.parquet');
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW segments_raw AS
-        SELECT * FROM read_parquet(
-          '${OVERTURE_BASE}/theme=transportation/type=segment/*.parquet',
-          hive_partitioning=1);
+        SELECT * FROM read_parquet('${RELEASE_BASE}/segments_uk.parquet');
       `);
 
       setStatus("Creating friendly projected views…");
@@ -1049,51 +1020,42 @@ LIMIT 20;`
         console.warn("segments projected view failed:", e.message);
       }
 
-      setStatus("Creating UK bbox-filtered views…");
+      setStatus("Creating UK views…");
 
-      // ── UK filtered views ──────────────────────────────────────────────────
+      // ── UK views — the raw data is already UK-filtered so these are simple
+      //    aliases of the projected views, kept for clue/query compatibility.
       if (placesViewOk) {
         await conn.query(`
           CREATE OR REPLACE VIEW places_uk AS
-          SELECT * FROM places
-          WHERE lon BETWEEN ${UK.west} AND ${UK.east}
-            AND lat BETWEEN ${UK.south} AND ${UK.north};
+          SELECT * FROM places;
         `);
       }
 
       if (addressViewOk) {
         await conn.query(`
           CREATE OR REPLACE VIEW addresses_uk AS
-          SELECT * FROM addresses
-          WHERE lon BETWEEN ${UK.west} AND ${UK.east}
-            AND lat BETWEEN ${UK.south} AND ${UK.north};
+          SELECT * FROM addresses;
         `);
       }
 
       if (buildingsViewOk) {
         await conn.query(`
           CREATE OR REPLACE VIEW buildings_uk AS
-          SELECT * FROM buildings
-          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
-            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+          SELECT * FROM buildings;
         `);
       }
 
       if (divisionsViewOk) {
         await conn.query(`
           CREATE OR REPLACE VIEW divisions_uk AS
-          SELECT * FROM divisions
-          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
-            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+          SELECT * FROM divisions;
         `);
       }
 
       if (segmentsViewOk) {
         await conn.query(`
           CREATE OR REPLACE VIEW segments_uk AS
-          SELECT * FROM segments
-          WHERE xmax >= ${UK.west} AND xmin <= ${UK.east}
-            AND ymax >= ${UK.south} AND ymin <= ${UK.north};
+          SELECT * FROM segments;
         `);
       }
 
@@ -1205,23 +1167,17 @@ LIMIT 20;`
 
   function insertBboxTemplate() {
     sqlEditor.value =
-`-- UK bounding box template — adapt to whichever table you need
-WITH uk AS (
-  SELECT
-    ${UK.west}  AS west,
-    ${UK.south} AS south,
-    ${UK.east}  AS east,
-    ${UK.north} AS north
-)
+`-- Data is pre-filtered to the UK bbox — query any table freely.
+-- You can still add a tighter spatial filter for a specific city:
 SELECT p.name, p.category, p.lat, p.lon
-FROM places AS p, uk
-WHERE p.lon BETWEEN uk.west AND uk.east
-  AND p.lat BETWEEN uk.south AND uk.north
+FROM places AS p
+WHERE p.lat BETWEEN 51.46 AND 51.56
+  AND p.lon BETWEEN -0.20 AND -0.05
 LIMIT 50;
 
--- For object bbox tables (buildings, divisions, segments):
--- WHERE bbox.xmax >= uk.west  AND bbox.xmin <= uk.east
---   AND bbox.ymax >= uk.south AND bbox.ymin <= uk.north`;
+-- For struct-bbox tables (buildings, divisions, segments) use:
+-- WHERE xmax >= west  AND xmin <= east
+--   AND ymax >= south AND ymin <= north`;
     selectTab("editor");
     sqlEditor.focus();
   }

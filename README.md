@@ -1,7 +1,7 @@
 # Geospatial SQL Treasure Hunt
 
-A browser-based geospatial treasure hunt using **DuckDB-WASM** to query remote
-[Overture Maps](https://overturemaps.org/) Parquet data from public S3 — no backend required.
+A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
+UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no backend required.
 
 ## Live Demo
 
@@ -20,7 +20,7 @@ A browser-based geospatial treasure hunt using **DuckDB-WASM** to query remote
 | **Map** | MapLibre GL (dark basemap, click-to-inspect popups) |
 | **SQL editor** | Multi-line textarea with Ctrl/Cmd+Enter shortcut to run |
 | **Overture themes** | Places · Addresses · Buildings · Divisions · Transportation |
-| **UK bbox pre-filtering** | Views (`places_uk`, `addresses_uk`, `buildings_uk`, …) that restrict scans to Great Britain + NI |
+| **UK-pre-filtered data** | One Parquet file per theme, pre-built to the UK bbox — no global scans |
 | **Schema inspection** | `DESCRIBE` demo queries for every theme |
 | **Defensive views** | Multiple fallback projections tried; graceful messaging when schemas differ |
 | **Theme filter** | Filter the clue list by Overture theme |
@@ -32,7 +32,7 @@ A browser-based geospatial treasure hunt using **DuckDB-WASM** to query remote
 1. Fork or clone this repository.
 2. Go to **Settings → Pages** and set the source branch to `main` (root `/`).
 3. GitHub will build and publish the site — usually within 60 seconds.
-4. Open the published URL, click **⚡ Init DuckDB**, wait ~15–30 s, then start exploring!
+4. Open the published URL, click **⚡ Init DuckDB**, wait ~2–5 s, then start exploring!
 
 ---
 
@@ -60,35 +60,40 @@ Then open `http://localhost:8080` in your browser.
 
 ## Overture Data Source
 
-Data is read live from the public Overture Maps Azure Blob Storage container
-(CORS-enabled, no credentials required):
+Data is served from **GitHub Release assets** in this repository.  The release is
+tagged `overture-uk-{overture_release}` (e.g. `overture-uk-2026-03-18.0`) and
+contains one ZSTD-compressed Parquet file per theme, pre-filtered to the UK
+bounding box:
 
 ```
-https://overturemapswestus2.blob.core.windows.net/release/2025-07-23.0/
+https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
+  places_uk.parquet
+  addresses_uk.parquet
+  buildings_uk.parquet
+  divisions_uk.parquet
+  segments_uk.parquet
 ```
 
-At initialisation the app calls Azure's public [List Blobs REST API](https://learn.microsoft.com/en-us/rest/api/storageservices/list-blobs)
-to discover the exact `.parquet` file URLs for each theme, then passes them as
-an explicit array to DuckDB's `read_parquet([url1, url2, …])`.  This sidesteps
-the DuckDB-WASM limitation where glob wildcards (`*`) cannot be expanded over
-plain HTTPS.
+DuckDB reads a single Parquet footer per theme (one HTTP round trip) instead of
+discovering and reading headers from hundreds of S3 partition files.  This cuts
+browser initialisation from ~20–30 s to ~2–5 s.
 
-Themes queried:
+### Rebuilding the data
 
-| Theme | Prefix |
-|---|---|
-| Places | `theme=places/type=place/` |
-| Addresses | `theme=addresses/type=address/` |
-| Buildings | `theme=buildings/type=building/` |
-| Divisions | `theme=divisions/type=division/` |
-| Transportation | `theme=transportation/type=segment/` |
+Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
+
+1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
+2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
+3. The workflow downloads the source data from the Overture public S3 bucket,
+   filters to the UK bbox, and uploads new Parquet files to a matching release.
+4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
 
 ---
 
 ## UK Bounding Box
 
-All demo queries pre-filter to the UK bounding box for performance.
-Scanning fewer Parquet row groups makes queries dramatically faster in the browser.
+The Parquet files are pre-filtered to the UK bounding box, so no global scan is
+ever needed in the browser.  You can apply a tighter filter to zoom in on a city:
 
 ```
 west  = -8.75   east  =  1.90
@@ -97,14 +102,14 @@ south = 49.80   north = 60.95
 
 **For point data (places, addresses):**
 ```sql
-WHERE lon BETWEEN -8.75 AND 1.90
-  AND lat BETWEEN 49.80 AND 60.95
+WHERE lon BETWEEN -0.20 AND -0.05
+  AND lat BETWEEN 51.46 AND 51.56   -- central London
 ```
 
 **For object bboxes (buildings, divisions, segments):**
 ```sql
-WHERE bbox.xmax >= -8.75 AND bbox.xmin <= 1.90
-  AND bbox.ymax >= 49.80 AND bbox.ymin <= 60.95
+WHERE xmax >= west  AND xmin <= east
+  AND ymax >= south AND ymin <= north
 ```
 
 ---
@@ -115,7 +120,11 @@ WHERE bbox.xmax >= -8.75 AND bbox.xmin <= 1.90
 index.html          ← entire app (single static file)
   ├─ MapLibre GL    ← map rendering (CDN)
   └─ DuckDB-WASM    ← in-browser SQL engine (CDN / jsDelivr)
-       └─ httpfs    ← reads Parquet directly from S3 over HTTP range requests
+       └─ httpfs    ← reads single Parquet files from GitHub Releases via HTTP range requests
+
+.github/workflows/
+  build-uk-parquets.yml  ← builds & publishes the UK Parquet Release assets
+  deploy.yml             ← deploys index.html to GitHub Pages
 ```
 
 No build step. No server. No API keys needed.
