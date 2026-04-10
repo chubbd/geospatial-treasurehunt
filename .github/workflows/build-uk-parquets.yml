@@ -1,9 +1,23 @@
 name: Build UK Overture Parquets
 
-# Builds UK-bbox-filtered Parquet files from the Overture Maps public S3 bucket
-# and uploads them as GitHub Release assets. A single pre-filtered file per theme
-# lets DuckDB-WASM read just one Parquet footer instead of 200+ S3 partition
-# footers, cutting browser query initialisation from ~20–30 s to ~1–3 s.
+# Builds UK-bbox-filtered, Hilbert-re-sorted Parquet files from the Overture
+# Maps public S3 bucket and uploads them as GitHub Release assets.
+#
+# Why a single pre-filtered file per theme?
+#   DuckDB-WASM reads one Parquet footer instead of 200+ S3 partition footers,
+#   cutting browser query initialisation from ~20–30 s to ~2–5 s.
+#
+# Why Hilbert re-sort?
+#   Overture source files are Hilbert-sorted against a global (world) extent.
+#   After filtering to the UK, we re-sort against the UK extent using
+#   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(UK_WEST,UK_SOUTH,...)))
+#   so that row groups cluster tightly within UK sub-regions. This lets
+#   DuckDB-WASM skip far more row groups when users query a city-sized bbox
+#   (e.g. "all museums in London"), yielding faster in-browser queries.
+#   Using the hardcoded UK bbox as the Hilbert bounds avoids a double-scan.
+#
+# DuckDB 1.5.1 is used for its improved geospatial handling (ST_Hilbert, full
+# GeoParquet read/write, updated spatial extension).
 #
 # Usage:
 #   Trigger manually via "Run workflow" in the Actions UI, optionally overriding
@@ -24,7 +38,7 @@ permissions:
   contents: write   # needed to create/update releases
 
 env:
-  DUCKDB_VERSION: '1.2.1'
+  DUCKDB_VERSION: '1.5.1'
   UK_WEST:  '-8.75'
   UK_SOUTH: '49.80'
   UK_EAST:  '1.90'
@@ -54,10 +68,18 @@ jobs:
             local theme="$1" type="$2" out="$3"
             echo "==> Processing ${out} …"
             ./duckdb -c "
+              INSTALL spatial;
+              LOAD spatial;
               SET s3_region='us-west-2';
               SET s3_use_ssl=true;
               SET s3_access_key_id='';
               SET s3_secret_access_key='';
+              -- Overture source files are Hilbert-sorted against a global (world) extent.
+              -- We re-sort against the UK extent so that row groups cluster tightly
+              -- within UK sub-regions, letting DuckDB-WASM skip far more row groups
+              -- when users query a city-sized bbox.
+              -- ST_Extent(ST_MakeEnvelope(...)) avoids a double-scan by using the known
+              -- UK bbox as the Hilbert bounds (all output rows are within it anyway).
               COPY (
                 SELECT *
                 FROM read_parquet(
@@ -67,6 +89,10 @@ jobs:
                 WHERE bbox IS NOT NULL
                   AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
                   AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
+                ORDER BY ST_Hilbert(
+                  geometry,
+                  ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
+                )
               ) TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
             "
             echo "    done — $(du -sh dist/${out} | cut -f1)"

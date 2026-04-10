@@ -63,7 +63,7 @@ Then open `http://localhost:8080` in your browser.
 Data is served from **GitHub Release assets** in this repository.  The release is
 tagged `overture-uk-{overture_release}` (e.g. `overture-uk-2026-03-18.0`) and
 contains one ZSTD-compressed Parquet file per theme, pre-filtered to the UK
-bounding box:
+bounding box and **Hilbert-re-sorted against the UK extent**:
 
 ```
 https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
@@ -78,14 +78,22 @@ DuckDB reads a single Parquet footer per theme (one HTTP round trip) instead of
 discovering and reading headers from hundreds of S3 partition files.  This cuts
 browser initialisation from ~20–30 s to ~2–5 s.
 
+**Why Hilbert re-sort?**  Overture's source files are already Hilbert-sorted, but
+against a global (world) extent.  Re-sorting the UK subset against the UK extent
+tightens the spatial clustering within each row group, so DuckDB-WASM can skip
+many more row groups when executing a city-sized bbox query (e.g. "all buildings
+in London"), making in-browser queries noticeably faster.  The build workflow uses
+DuckDB 1.5.1 for its improved geospatial handling and full GeoParquet support.
+
 ### Rebuilding the data
 
 Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
 
 1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
 2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
-3. The workflow downloads the source data from the Overture public S3 bucket,
-   filters to the UK bbox, and uploads new Parquet files to a matching release.
+3. The workflow installs DuckDB 1.5.1 + spatial extension, downloads the source
+   data from the Overture public S3 bucket, filters to the UK bbox, re-sorts by
+   Hilbert curve (UK extent), and uploads new Parquet files to a matching release.
 4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
 
 ---
