@@ -60,21 +60,28 @@ Then open `http://localhost:8080` in your browser.
 
 ## Overture Data Source
 
-Data is read live from the public Overture Maps S3 bucket:
+Data is read live from the public Overture Maps Azure Blob Storage container
+(CORS-enabled, no credentials required):
 
 ```
-s3://overturemaps-us-west-2/release/2025-01-22.0/
+https://overturemapswestus2.blob.core.windows.net/release/2025-07-23.0/
 ```
+
+At initialisation the app calls Azure's public [List Blobs REST API](https://learn.microsoft.com/en-us/rest/api/storageservices/list-blobs)
+to discover the exact `.parquet` file URLs for each theme, then passes them as
+an explicit array to DuckDB's `read_parquet([url1, url2, …])`.  This sidesteps
+the DuckDB-WASM limitation where glob wildcards (`*`) cannot be expanded over
+plain HTTPS.
 
 Themes queried:
 
-| Theme | S3 path |
+| Theme | Prefix |
 |---|---|
-| Places | `theme=places/type=place/*` |
-| Addresses | `theme=addresses/type=address/*` |
-| Buildings | `theme=buildings/type=building/*` |
-| Divisions | `theme=divisions/type=division/*` |
-| Transportation | `theme=transportation/type=segment/*` |
+| Places | `theme=places/type=place/` |
+| Addresses | `theme=addresses/type=address/` |
+| Buildings | `theme=buildings/type=building/` |
+| Divisions | `theme=divisions/type=division/` |
+| Transportation | `theme=transportation/type=segment/` |
 
 ---
 

@@ -318,17 +318,45 @@
   // ---------------------------------------------------------------------------
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  const OVERTURE_BASE =
-    "https://overturemaps-us-west-2.s3.amazonaws.com/release/2025-01-22.0";
+  // Overture Maps data via Azure Blob Storage (CORS-enabled, browser-friendly).
+  // DuckDB-WASM cannot expand S3/HTTPS glob wildcards, so we use Azure's public
+  // List Blobs REST API at init time to discover the exact parquet file URLs and
+  // pass them as an explicit array to read_parquet([...]).
+  const OVERTURE_AZURE_CONTAINER = "https://overturemapswestus2.blob.core.windows.net/release";
+  const OVERTURE_RELEASE         = "2025-07-23.0";
 
-  const URLS = {
-    places:         `${OVERTURE_BASE}/theme=places/type=place/*`,
-    addresses:      `${OVERTURE_BASE}/theme=addresses/type=address/*`,
-    buildings:      `${OVERTURE_BASE}/theme=buildings/type=building/*`,
-    divisions:      `${OVERTURE_BASE}/theme=divisions/type=division/*`,
-    divisionAreas:  `${OVERTURE_BASE}/theme=divisions/type=division_area/*`,
-    segments:       `${OVERTURE_BASE}/theme=transportation/type=segment/*`,
+  const OVERTURE_PREFIXES = {
+    places:       `${OVERTURE_RELEASE}/theme=places/type=place/`,
+    addresses:    `${OVERTURE_RELEASE}/theme=addresses/type=address/`,
+    buildings:    `${OVERTURE_RELEASE}/theme=buildings/type=building/`,
+    divisions:    `${OVERTURE_RELEASE}/theme=divisions/type=division/`,
+    divisionAreas:`${OVERTURE_RELEASE}/theme=divisions/type=division_area/`,
+    segments:     `${OVERTURE_RELEASE}/theme=transportation/type=segment/`,
   };
+
+  // Fetch the list of parquet blob URLs for a given theme prefix.
+  async function listAzureBlobs(prefix) {
+    const urls = [];
+    let marker = "";
+    do {
+      const params = new URLSearchParams({ restype: "container", comp: "list", prefix });
+      if (marker) params.set("marker", marker);
+      const resp = await fetch(`${OVERTURE_AZURE_CONTAINER}?${params}`);
+      if (!resp.ok) throw new Error(`Blob list HTTP ${resp.status} for prefix: ${prefix}`);
+      const doc = new DOMParser().parseFromString(await resp.text(), "text/xml");
+      doc.querySelectorAll("Blob > Name").forEach(n => {
+        urls.push(`${OVERTURE_AZURE_CONTAINER}/${n.textContent}`);
+      });
+      marker = doc.querySelector("NextMarker")?.textContent ?? "";
+    } while (marker);
+    if (!urls.length) throw new Error(`No parquet files found for prefix: ${prefix}`);
+    return urls;
+  }
+
+  // Format an array of URLs for use inside a DuckDB read_parquet([...]) call.
+  function urlArraySql(urls) {
+    return "[" + urls.map(u => `'${u}'`).join(", ") + "]";
+  }
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -803,34 +831,46 @@ LIMIT 20;`
       conn = await db.connect();
 
       // Extensions — both are required:
-      //   httpfs  : remote HTTPS / S3 parquet reading (Overture data)
+      //   httpfs  : remote HTTPS parquet reading (Overture data via Azure)
       //   spatial : geometry decoding + ST_* functions
       setStatus("Loading extensions…");
       await conn.query(`INSTALL httpfs; LOAD httpfs;`);
       await conn.query(`INSTALL spatial; LOAD spatial;`);
+
+      // Discover parquet files via Azure List Blobs API (DuckDB-WASM cannot
+      // expand glob wildcards over HTTPS, so we resolve them in JS first).
+      setStatus("Discovering data files via Azure…");
+      const [placesFiles, addressFiles, buildingFiles, divisionFiles, segmentFiles] =
+        await Promise.all([
+          listAzureBlobs(OVERTURE_PREFIXES.places),
+          listAzureBlobs(OVERTURE_PREFIXES.addresses),
+          listAzureBlobs(OVERTURE_PREFIXES.buildings),
+          listAzureBlobs(OVERTURE_PREFIXES.divisions),
+          listAzureBlobs(OVERTURE_PREFIXES.segments),
+        ]);
 
       setStatus("Creating raw views…");
 
       // Raw views — lazy, schema-agnostic
       await conn.query(`
         CREATE OR REPLACE VIEW places_raw AS
-        SELECT * FROM read_parquet('${URLS.places}', filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(${urlArraySql(placesFiles)}, filename=true, hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW addresses_raw AS
-        SELECT * FROM read_parquet('${URLS.addresses}', filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(${urlArraySql(addressFiles)}, filename=true, hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW buildings_raw AS
-        SELECT * FROM read_parquet('${URLS.buildings}', filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(${urlArraySql(buildingFiles)}, filename=true, hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW divisions_raw AS
-        SELECT * FROM read_parquet('${URLS.divisions}', filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(${urlArraySql(divisionFiles)}, filename=true, hive_partitioning=1);
       `);
       await conn.query(`
         CREATE OR REPLACE VIEW segments_raw AS
-        SELECT * FROM read_parquet('${URLS.segments}', filename=true, hive_partitioning=1);
+        SELECT * FROM read_parquet(${urlArraySql(segmentFiles)}, filename=true, hive_partitioning=1);
       `);
 
       setStatus("Creating friendly projected views…");
