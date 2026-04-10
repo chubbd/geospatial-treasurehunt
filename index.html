@@ -99,18 +99,46 @@
     }
     #map { width: 100%; height: 100%; }
     #workbench {
-      display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
+      display: flex;
+      flex-direction: column;
       min-height: 0;
       border-top: 1px solid var(--border);
     }
+    .tab-bar {
+      display: flex;
+      gap: 0;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .tab-btn {
+      padding: 7px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      border-right: 1px solid var(--border);
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .tab-btn:hover { color: var(--text); border-color: var(--border); }
+    .tab-btn.active {
+      color: var(--accent);
+      background: rgba(103,232,249,.07);
+      border-bottom: 2px solid var(--accent);
+      margin-bottom: -1px;
+    }
     #editorPane, #resultsPane {
       min-height: 0;
-      display: flex;
+      display: none;
       flex-direction: column;
+      flex: 1;
+    }
+    #editorPane.tab-active, #resultsPane.tab-active {
+      display: flex;
     }
     #editorPane {
-      border-right: 1px solid var(--border);
       background: var(--panel);
     }
     #resultsPane { background: #0f1728; }
@@ -282,7 +310,11 @@
   <div id="map"></div>
 
   <div id="workbench">
-    <section id="editorPane">
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabSql" data-tab="editor">✏️ SQL Editor</button>
+      <button class="tab-btn" id="tabResults" data-tab="results">📊 Results</button>
+    </div>
+    <section id="editorPane" class="tab-active">
       <div class="toolbar">
         <button id="initBtn" class="warn">⚡ Init DuckDB</button>
         <button id="runBtn" class="primary">▶ Run SQL</button>
@@ -1083,7 +1115,13 @@ LIMIT 20;`
       return;
     }
     const sql = sqlEditor.value.trim();
-    if (!sql || sql.startsWith("--")) {
+    // Strip -- line comments and /* block comments */ before checking emptiness,
+    // so SQL that starts with comment lines is still executed correctly.
+    const sqlWithoutComments = sql
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/--[^\n]*/g, "")
+      .trim();
+    if (!sqlWithoutComments) {
       setStatus("No SQL to run (editor is empty or only comments).", "err");
       return;
     }
@@ -1099,11 +1137,13 @@ LIMIT 20;`
       plotRows(rows);
       resultsMetaEl.textContent = `${rows.length} row(s) · ${ms} ms`;
       setStatus("Query succeeded.", "ok");
+      selectTab("results");
     } catch (err) {
       console.error("Query error:", err);
       resultsEl.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12px; white-space:pre-wrap;">${escHtml(err.message)}</div>`;
       resultsMetaEl.textContent = "Query failed.";
       setStatus(`Query failed: ${err.message}`, "err");
+      selectTab("results");
     }
   }
 
@@ -1152,6 +1192,7 @@ LIMIT 20;`
       return;
     }
     sqlEditor.value = currentClue.starterSql;
+    selectTab("editor");
   }
 
   function insertBboxTemplate() {
@@ -1173,6 +1214,7 @@ LIMIT 50;
 -- For object bbox tables (buildings, divisions, segments):
 -- WHERE bbox.xmax >= uk.west  AND bbox.xmin <= uk.east
 --   AND bbox.ymax >= uk.south AND bbox.ymin <= uk.north`;
+    selectTab("editor");
   }
 
   function clearMap() {
@@ -1195,6 +1237,17 @@ LIMIT 50;
   });
 
   // ---------------------------------------------------------------------------
+  // Tab switching
+  // ---------------------------------------------------------------------------
+  function selectTab(tab) {
+    const isEditor = tab === "editor";
+    document.getElementById("editorPane").classList.toggle("tab-active", isEditor);
+    document.getElementById("resultsPane").classList.toggle("tab-active", !isEditor);
+    document.getElementById("tabSql").classList.toggle("active", isEditor);
+    document.getElementById("tabResults").classList.toggle("active", !isEditor);
+  }
+
+  // ---------------------------------------------------------------------------
   // Toolbar event listeners
   // ---------------------------------------------------------------------------
   document.getElementById("initBtn").addEventListener("click", initializeDuckDB);
@@ -1203,6 +1256,10 @@ LIMIT 50;
   document.getElementById("sampleBtn").addEventListener("click", insertStarterSql);
   document.getElementById("clearMapBtn").addEventListener("click", clearMap);
   document.getElementById("bboxSnippetBtn").addEventListener("click", insertBboxTemplate);
+
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => selectTab(btn.dataset.tab));
+  });
 
   // Ctrl/Cmd+Enter to run
   sqlEditor.addEventListener("keydown", (e) => {
