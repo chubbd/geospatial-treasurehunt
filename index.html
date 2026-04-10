@@ -135,6 +135,13 @@
       flex-direction: column;
       flex: 1;
     }
+    .tab-btn.has-badge::after {
+      content: "●";
+      margin-left: 5px;
+      color: var(--accent);
+      font-size: 8px;
+      vertical-align: middle;
+    }
     #editorPane.tab-active, #resultsPane.tab-active {
       display: flex;
     }
@@ -310,20 +317,20 @@
   <div id="map"></div>
 
   <div id="workbench">
+    <div class="toolbar">
+      <button id="initBtn" class="warn">⚡ Init DuckDB</button>
+      <button id="runBtn" class="primary">▶ Run SQL</button>
+      <button id="hintBtn">💡 Hint</button>
+      <button id="sampleBtn">📋 Insert Demo SQL</button>
+      <button id="clearMapBtn">🗑 Clear Map</button>
+      <button id="bboxSnippetBtn">📐 UK BBox Template</button>
+    </div>
+    <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
     <div class="tab-bar">
-      <button class="tab-btn active" id="tabSql" data-tab="editor">✏️ SQL Editor</button>
+      <button class="tab-btn active" id="tabSql" data-tab="editor">✏️ Query</button>
       <button class="tab-btn" id="tabResults" data-tab="results">📊 Results</button>
     </div>
     <section id="editorPane" class="tab-active">
-      <div class="toolbar">
-        <button id="initBtn" class="warn">⚡ Init DuckDB</button>
-        <button id="runBtn" class="primary">▶ Run SQL</button>
-        <button id="hintBtn">💡 Hint</button>
-        <button id="sampleBtn">📋 Insert Demo SQL</button>
-        <button id="clearMapBtn">🗑 Clear Map</button>
-        <button id="bboxSnippetBtn">📐 UK BBox Template</button>
-      </div>
-      <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
       <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first, then select a clue and click "📋 Insert Demo SQL".
 -- Always prefilter to the UK bounding box for performance:
 --   lon BETWEEN -8.75 AND 1.90  AND  lat BETWEEN 49.80 AND 60.95
@@ -1136,14 +1143,14 @@ LIMIT 20;`
       rowsToTable(rows);
       plotRows(rows);
       resultsMetaEl.textContent = `${rows.length} row(s) · ${ms} ms`;
-      setStatus("Query succeeded.", "ok");
-      selectTab("results");
+      setStatus(`Query succeeded — ${rows.length} row(s). Click the 📊 Results tab to view.`, "ok");
+      markResultsReady();
     } catch (err) {
       console.error("Query error:", err);
       resultsEl.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12px; white-space:pre-wrap;">${escHtml(err.message)}</div>`;
       resultsMetaEl.textContent = "Query failed.";
       setStatus(`Query failed: ${err.message}`, "err");
-      selectTab("results");
+      markResultsReady();
     }
   }
 
@@ -1193,6 +1200,7 @@ LIMIT 20;`
     }
     sqlEditor.value = currentClue.starterSql;
     selectTab("editor");
+    sqlEditor.focus();
   }
 
   function insertBboxTemplate() {
@@ -1215,6 +1223,7 @@ LIMIT 50;
 -- WHERE bbox.xmax >= uk.west  AND bbox.xmin <= uk.east
 --   AND bbox.ymax >= uk.south AND bbox.ymin <= uk.north`;
     selectTab("editor");
+    sqlEditor.focus();
   }
 
   function clearMap() {
@@ -1244,7 +1253,18 @@ LIMIT 50;
     document.getElementById("editorPane").classList.toggle("tab-active", isEditor);
     document.getElementById("resultsPane").classList.toggle("tab-active", !isEditor);
     document.getElementById("tabSql").classList.toggle("active", isEditor);
-    document.getElementById("tabResults").classList.toggle("active", !isEditor);
+    const tabResults = document.getElementById("tabResults");
+    tabResults.classList.toggle("active", !isEditor);
+    // Clear the "new results" badge when switching to results tab
+    if (!isEditor) tabResults.classList.remove("has-badge");
+  }
+
+  function markResultsReady() {
+    // Highlight the Results tab button to signal new results without auto-switching
+    const tabResults = document.getElementById("tabResults");
+    if (!tabResults.classList.contains("active")) {
+      tabResults.classList.add("has-badge");
+    }
   }
 
   // ---------------------------------------------------------------------------
