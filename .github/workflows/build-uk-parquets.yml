@@ -64,51 +64,104 @@ jobs:
           mkdir -p dist
           BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
 
+          # Shared DuckDB SQL preamble
+          PREAMBLE="
+            INSTALL spatial;
+            LOAD spatial;
+            SET s3_region='us-west-2';
+            SET s3_use_ssl=true;
+            SET s3_access_key_id='';
+            SET s3_secret_access_key='';
+            SET temp_directory='/tmp';
+            SET memory_limit='14GB';
+            SET threads=2;
+          "
+
+          # Shared SELECT for a theme/type
+          theme_select() {
+            local theme="$1" type="$2"
+            echo "
+              SELECT *
+              FROM read_parquet(
+                '${BASE}/theme=${theme}/type=${type}/*.parquet',
+                hive_partitioning=1
+              )
+              WHERE bbox IS NOT NULL
+                AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
+                AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
+              ORDER BY ST_Hilbert(
+                geometry,
+                ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
+              )
+            "
+          }
+
+          # Single-file output for small themes (< 2 GB)
           run_theme() {
             local theme="$1" type="$2" out="$3"
             echo "==> Processing ${out} …"
             ./duckdb -c "
-              INSTALL spatial;
-              LOAD spatial;
-              SET s3_region='us-west-2';
-              SET s3_use_ssl=true;
-              SET s3_access_key_id='';
-              SET s3_secret_access_key='';
-              SET temp_directory='/tmp';
-              SET memory_limit='14GB';
-              SET threads=2;
-              -- Overture source files are Hilbert-sorted against a global (world) extent.
-              -- We re-sort against the UK extent so that row groups cluster tightly
-              -- within UK sub-regions, letting DuckDB-WASM skip far more row groups
-              -- when users query a city-sized bbox.
-              -- ST_Extent(ST_MakeEnvelope(...)) avoids a double-scan by using the known
-              -- UK bbox as the Hilbert bounds (all output rows are within it anyway).
-              COPY (
-                SELECT *
-                FROM read_parquet(
-                  '${BASE}/theme=${theme}/type=${type}/*.parquet',
-                  hive_partitioning=1
-                )
-                WHERE bbox IS NOT NULL
-                  AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
-                  AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
-                ORDER BY ST_Hilbert(
-                  geometry,
-                  ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
-                )
-              ) TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
+              ${PREAMBLE}
+              COPY ($(theme_select ${theme} ${type}))
+              TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
             "
             echo "    done — $(du -sh dist/${out} | cut -f1)"
           }
 
-          run_theme places       place    places_uk.parquet
-          run_theme addresses    address  addresses_uk.parquet
-          run_theme buildings    building buildings_uk.parquet
-          run_theme divisions    division divisions_uk.parquet
-          run_theme transportation segment  segments_uk.parquet
+          # Sharded output for large themes (> 2 GB GitHub asset limit).
+          # DuckDB writes data_0.parquet, data_1.parquet … into a temp directory;
+          # we then move them to dist/ as ${out_base}_0.parquet, _1.parquet, …
+          run_theme_sharded() {
+            local theme="$1" type="$2" out_base="$3"
+            echo "==> Processing ${out_base} (sharded, max 1.9 GB per part) …"
+            local tmpdir="dist/${out_base}_shards"
+            mkdir -p "${tmpdir}"
+            ./duckdb -c "
+              ${PREAMBLE}
+              COPY ($(theme_select ${theme} ${type}))
+              TO '${tmpdir}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000, FILE_SIZE_BYTES 1900000000);
+            "
+            # Rename data_N.parquet → ${out_base}_N.parquet in dist/
+            local i=0
+            for f in "${tmpdir}"/data_*.parquet; do
+              [ -f "$f" ] || continue
+              mv "$f" "dist/${out_base}_${i}.parquet"
+              i=$((i+1))
+            done
+            rmdir "${tmpdir}"
+            echo "    done — $(du -sh dist/${out_base}_*.parquet)"
+          }
+
+          run_theme         places         place    places_uk.parquet
+          run_theme         addresses      address  addresses_uk.parquet
+          run_theme_sharded buildings      building buildings_uk
+          run_theme         divisions      division divisions_uk.parquet
+          run_theme_sharded transportation segment  segments_uk
 
           echo "--- Final file sizes ---"
           du -sh dist/*.parquet
+
+          # Generate manifest.json so the browser knows which shard files exist
+          # for each theme (single-file themes are also listed for uniformity).
+          python3 - <<'EOF'
+          import json, os, re
+          dist = sorted(os.listdir('dist'))
+          manifest = {}
+          for base in ['places_uk', 'addresses_uk', 'divisions_uk']:
+              fname = f'{base}.parquet'
+              if fname in dist:
+                  manifest[base] = [fname]
+          for base in ['buildings_uk', 'segments_uk']:
+              shards = sorted(
+                  [f for f in dist if re.match(f'^{re.escape(base)}_\\d+\\.parquet$', f)],
+                  key=lambda x: int(re.search(r'_(\d+)\.parquet$', x).group(1))
+              )
+              if shards:
+                  manifest[base] = shards
+          with open('dist/manifest.json', 'w') as fh:
+              json.dump(manifest, fh, indent=2)
+          print('manifest.json written:', json.dumps(manifest, indent=2))
+          EOF
 
       - name: Create or update GitHub Release and upload Parquets
         env:
@@ -134,6 +187,6 @@ jobs:
             --latest \
             || true   # ignore 'already exists' error
 
-          gh release upload "${TAG}" dist/*.parquet \
+          gh release upload "${TAG}" dist/*.parquet dist/manifest.json \
             --repo "${{ github.repository }}" \
             --clobber
