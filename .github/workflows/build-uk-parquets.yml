@@ -1,0 +1,136 @@
+name: Build UK Overture Parquets
+
+# Builds UK-bbox-filtered, Hilbert-re-sorted Parquet files from the Overture
+# Maps public S3 bucket and uploads them as GitHub Release assets.
+#
+# Why a single pre-filtered file per theme?
+#   DuckDB-WASM reads one Parquet footer instead of 200+ S3 partition footers,
+#   cutting browser query initialisation from ~20–30 s to ~2–5 s.
+#
+# Why Hilbert re-sort?
+#   Overture source files are Hilbert-sorted against a global (world) extent.
+#   After filtering to the UK, we re-sort against the UK extent using
+#   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(UK_WEST,UK_SOUTH,...)))
+#   so that row groups cluster tightly within UK sub-regions. This lets
+#   DuckDB-WASM skip far more row groups when users query a city-sized bbox
+#   (e.g. "all museums in London"), yielding faster in-browser queries.
+#   Using the hardcoded UK bbox as the Hilbert bounds avoids a double-scan.
+#
+# DuckDB 1.5.1 is used for its improved geospatial handling (ST_Hilbert, full
+# GeoParquet read/write, updated spatial extension).
+#
+# Usage:
+#   Trigger manually via "Run workflow" in the Actions UI, optionally overriding
+#   the Overture release tag. The workflow creates (or updates) a GitHub Release
+#   tagged  overture-uk-{overture_release}  with five Parquet assets.
+#
+# The release tag used here MUST match OVERTURE_RELEASE in index.html.
+
+on:
+  workflow_dispatch:
+    inputs:
+      overture_release:
+        description: 'Overture release tag (e.g. 2026-03-18.0)'
+        required: true
+        default: '2026-03-18.0'
+
+permissions:
+  contents: write   # needed to create/update releases
+
+env:
+  DUCKDB_VERSION: '1.5.1'
+  UK_WEST:  '-8.75'
+  UK_SOUTH: '49.80'
+  UK_EAST:  '1.90'
+  UK_NORTH: '60.95'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install DuckDB CLI
+        run: |
+          curl -fsSL \
+            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
+            -o duckdb.zip
+          unzip -q duckdb.zip
+          chmod +x duckdb
+          ./duckdb --version
+
+      - name: Build UK-filtered Parquets
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          mkdir -p dist
+          BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
+
+          run_theme() {
+            local theme="$1" type="$2" out="$3"
+            echo "==> Processing ${out} …"
+            ./duckdb -c "
+              INSTALL spatial;
+              LOAD spatial;
+              SET s3_region='us-west-2';
+              SET s3_use_ssl=true;
+              SET s3_access_key_id='';
+              SET s3_secret_access_key='';
+              -- Overture source files are Hilbert-sorted against a global (world) extent.
+              -- We re-sort against the UK extent so that row groups cluster tightly
+              -- within UK sub-regions, letting DuckDB-WASM skip far more row groups
+              -- when users query a city-sized bbox.
+              -- ST_Extent(ST_MakeEnvelope(...)) avoids a double-scan by using the known
+              -- UK bbox as the Hilbert bounds (all output rows are within it anyway).
+              COPY (
+                SELECT *
+                FROM read_parquet(
+                  '${BASE}/theme=${theme}/type=${type}/*.parquet',
+                  hive_partitioning=1
+                )
+                WHERE bbox IS NOT NULL
+                  AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
+                  AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
+                ORDER BY ST_Hilbert(
+                  geometry,
+                  ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
+                )
+              ) TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
+            "
+            echo "    done — $(du -sh dist/${out} | cut -f1)"
+          }
+
+          run_theme places       place    places_uk.parquet
+          run_theme addresses    address  addresses_uk.parquet
+          run_theme buildings    building buildings_uk.parquet
+          run_theme divisions    division divisions_uk.parquet
+          run_theme transportation segment  segments_uk.parquet
+
+          echo "--- Final file sizes ---"
+          du -sh dist/*.parquet
+
+      - name: Create or update GitHub Release and upload Parquets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          TAG="overture-uk-${OVERTURE_RELEASE}"
+          TITLE="Overture UK Data (${OVERTURE_RELEASE})"
+
+          # Create release if it does not already exist; --clobber updates assets.
+          gh release create "${TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${TITLE}" \
+            --notes "UK-bbox-filtered Overture Maps Parquets built from the \`${OVERTURE_RELEASE}\` release.
+          Bounding box: west=${UK_WEST} east=${UK_EAST} south=${UK_SOUTH} north=${UK_NORTH}
+
+          Files:
+          - \`places_uk.parquet\`
+          - \`addresses_uk.parquet\`
+          - \`buildings_uk.parquet\`
+          - \`divisions_uk.parquet\`
+          - \`segments_uk.parquet\`" \
+            --latest \
+            || true   # ignore 'already exists' error
+
+          gh release upload "${TAG}" dist/*.parquet \
+            --repo "${{ github.repository }}" \
+            --clobber
