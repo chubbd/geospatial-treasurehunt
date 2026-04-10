@@ -74,7 +74,7 @@ jobs:
               SET s3_use_ssl=true;
               SET s3_access_key_id='';
               SET s3_secret_access_key='';
-              SET temp_directory='/mnt/tmp';
+              --SET temp_directory='/mnt/tmp';
               SET memory_limit='14GB';
               SET threads=2;
               -- Overture source files are Hilbert-sorted against a global (world) extent.
@@ -92,10 +92,10 @@ jobs:
                 WHERE bbox IS NOT NULL
                   AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
                   AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
-                ORDER BY ST_Hilbert(
-                  geometry,
-                  ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
-                )
+                --ORDER BY ST_Hilbert(
+                --geometry,
+                --ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
+                --)
               ) TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
             "
             echo "    done — $(du -sh dist/${out} | cut -f1)"
