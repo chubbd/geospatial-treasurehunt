@@ -94,7 +94,7 @@ jobs:
               --ORDER BY ST_Hilbert(
               --geometry,
               --ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
-              )
+              --)
             "
           }
 
