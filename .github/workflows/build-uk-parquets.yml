@@ -162,16 +162,11 @@ jobs:
               KEY_ID '', SECRET '', REGION 'us-west-2', USE_SSL true
             );
             ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
-            SELECT table_name, COUNT(*) AS registered_files
-            FROM (
-              SELECT 'places_raw'      AS table_name, filename FROM ducklake_data_files('lake', 'main', 'places_raw')      UNION ALL
-              SELECT 'addresses_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'addresses_raw')   UNION ALL
-              SELECT 'buildings_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'buildings_raw')   UNION ALL
-              SELECT 'divisions_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'divisions_raw')   UNION ALL
-              SELECT 'segments_raw'    AS table_name, filename FROM ducklake_data_files('lake', 'main', 'segments_raw')
-            )
-            GROUP BY table_name
-            ORDER BY table_name;
+            SELECT 'places_raw'    AS table, COUNT(*) AS n FROM lake.places_raw    LIMIT 0;
+            SELECT 'addresses_raw' AS table, COUNT(*) AS n FROM lake.addresses_raw LIMIT 0;
+            SELECT 'buildings_raw' AS table, COUNT(*) AS n FROM lake.buildings_raw LIMIT 0;
+            SELECT 'divisions_raw' AS table, COUNT(*) AS n FROM lake.divisions_raw LIMIT 0;
+            SELECT 'segments_raw'  AS table, COUNT(*) AS n FROM lake.segments_raw  LIMIT 0;
           "
 
       - name: Create or update GitHub Release and upload DuckLake catalog
