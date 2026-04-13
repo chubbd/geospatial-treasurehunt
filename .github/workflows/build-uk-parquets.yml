@@ -114,7 +114,10 @@ jobs:
               ${PREAMBLE}
               ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
               CREATE TABLE IF NOT EXISTS lake.${table} AS
-              SELECT * FROM read_parquet('${sample_file}')
+              SELECT
+              * EXCLUDE (geometry),
+              CAST(geometry AS BLOB) AS geometry
+              FROM read_parquet('${sample_file}')
               WITH NO DATA;
               CALL ducklake_add_data_files('lake', '${table}', ${files_literal});
             "
