@@ -351,10 +351,11 @@
   // ---------------------------------------------------------------------------
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  // UK-filtered Parquet files are pre-built by the "Build UK Overture Parquets"
-  // workflow and uploaded as GitHub Release assets. When the browser cannot read
-  // those release assets directly (e.g. CORS), we fall back to a tiny same-origin
-  // DuckLake catalog file that points at Overture's public S3 Parquet data.
+  // Data is loaded primarily from the DuckLake catalog (overture_uk.ducklake),
+  // which points at Overture's public S3 Parquet data. If DuckLake fails (e.g.
+  // the extension is unavailable in this WASM build), we fall back to the
+  // UK-filtered Parquet files pre-built by the "Build UK Overture Parquets"
+  // workflow and uploaded as GitHub Release assets.
   //
   // To update data: run the workflow with the new Overture release tag, then
   // update OVERTURE_RELEASE below to match.
@@ -915,12 +916,12 @@ LIMIT 20;`
         console.warn("Could not fetch manifest.json; falling back to single-file names", e);
       }
 
-      let rawViewSource = "GitHub Release assets";
+      let rawViewSource = "DuckLake catalog";
       try {
-        rawViewSource = await createRawViewsFromReleaseAssets(manifest);
-      } catch (releaseErr) {
-        console.warn("GitHub Release asset init failed; falling back to DuckLake:", releaseErr);
         rawViewSource = await createRawViewsFromDuckLake();
+      } catch (duckLakeErr) {
+        console.warn("DuckLake init failed; falling back to GitHub Release assets:", duckLakeErr);
+        rawViewSource = await createRawViewsFromReleaseAssets(manifest);
       }
 
       setStatus(`Creating friendly projected views… (${rawViewSource})`);
