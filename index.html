@@ -379,6 +379,14 @@
   // which points at Overture's public S3 Parquet data.
   const DUCKLAKE_CATALOG = "overture_uk.ducklake";
 
+  // Overture release tag — must match OVERTURE_RELEASE in deploy.yml.
+  const OVERTURE_RELEASE = "2026-03-18.0";
+  // Fallback URL: fetch the catalog directly from the GitHub Release asset
+  // when the same-origin copy hasn't landed yet (e.g. mid-deployment 404).
+  const RELEASE_CATALOG_URL =
+    `https://github.com/chubbd/geospatial-treasurehunt/releases/download/` +
+    `overture-uk-${OVERTURE_RELEASE}/${DUCKLAKE_CATALOG}`;
+
   // ---------------------------------------------------------------------------
   // Clues / demo queries
   // ---------------------------------------------------------------------------
@@ -829,8 +837,14 @@ LIMIT 20;`
   async function createRawViewsFromDuckLake() {
     // Fetch the .ducklake catalog file and register it in the WASM virtual
     // filesystem so the ducklake extension can open it by name.
+    // Try the same-origin copy first (deployed alongside index.html by deploy.yml);
+    // fall back to the GitHub Release asset if that returns a 404 (e.g. mid-deploy).
     setStatus("Fetching DuckLake catalog…");
-    const resp = await fetch(DUCKLAKE_CATALOG);
+    let resp = await fetch(DUCKLAKE_CATALOG);
+    if (resp.status === 404) {
+      setStatus("Fetching DuckLake catalog from release asset…");
+      resp = await fetch(RELEASE_CATALOG_URL);
+    }
     if (!resp.ok) throw new Error(`Failed to fetch catalog: ${resp.status} ${resp.statusText}`);
     const buf = await resp.arrayBuffer();
     await db.registerFileBuffer(DUCKLAKE_CATALOG, new Uint8Array(buf));
