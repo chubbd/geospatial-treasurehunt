@@ -93,9 +93,9 @@ jobs:
             local sample_file
             sample_file=$(./duckdb -csv -noheader -c "
               ${PREAMBLE}
-              SELECT file
+              SELECT filename
               FROM glob('${parquet_glob}')
-              ORDER BY file
+              ORDER BY filename
               LIMIT 1;
             ")
             [ -n "${sample_file}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
@@ -104,9 +104,9 @@ jobs:
             files_literal=$(
               ./duckdb -csv -noheader -c "
                 ${PREAMBLE}
-                SELECT file
+                SELECT filename
                 FROM glob('${parquet_glob}')
-                ORDER BY file;
+                ORDER BY filename;
               " | python3 -c "import sys; files = [line.strip() for line in sys.stdin if line.strip()] or sys.exit('No parquet files returned from glob()'); print('[' + ', '.join(\"'\" + f.replace(\"'\", \"''\") + \"'\" for f in files) + ']')"
             )
 
