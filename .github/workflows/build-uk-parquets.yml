@@ -1,7 +1,8 @@
 name: Build UK Overture Parquets
 
 # Builds UK-bbox-filtered, Hilbert-re-sorted Parquet files from the Overture
-# Maps public S3 bucket and uploads them as GitHub Release assets.
+# Maps public S3 bucket, plus a small DuckLake catalog that points at Overture's
+# public S3 Parquet files, and uploads them as GitHub Release assets.
 #
 # Why a single pre-filtered file per theme?
 #   DuckDB-WASM reads one Parquet footer instead of 200+ S3 partition footers,
@@ -22,7 +23,8 @@ name: Build UK Overture Parquets
 # Usage:
 #   Trigger manually via "Run workflow" in the Actions UI, optionally overriding
 #   the Overture release tag. The workflow creates (or updates) a GitHub Release
-#   tagged  overture-uk-{overture_release}  with five Parquet assets.
+#   tagged  overture-uk-{overture_release}  with Parquet assets plus
+#   overture_uk.ducklake.
 #
 # The release tag used here MUST match OVERTURE_RELEASE in index.html.
 
@@ -57,57 +59,83 @@ jobs:
           chmod +x duckdb
           ./duckdb --version
 
-      - name: Build UK-filtered Parquets
+      - name: Build UK-filtered Parquets (disabled)
+        run: |
+          # Disabled while we evaluate whether the DuckLake-only path is fast enough.
+          # Keeping the workflow step as a no-op makes it easy to restore the Parquet
+          # build later without losing the surrounding workflow structure.
+
+      - name: Build DuckLake catalog
         env:
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
         run: |
           mkdir -p dist
           BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
 
-          run_theme() {
-            local theme="$1" type="$2" out="$3"
-            echo "==> Processing ${out} …"
+          PREAMBLE="
+            INSTALL ducklake;
+            LOAD ducklake;
+            SET s3_region='us-west-2';
+            SET s3_use_ssl=true;
+            SET s3_access_key_id='';
+            SET s3_secret_access_key='';
+            SET temp_directory='/tmp';
+            SET memory_limit='14GB';
+            SET threads=2;
+          "
+
+          build_ducklake_table() {
+            local theme="$1" type="$2" table="$3"
+            local parquet_glob="${BASE}/theme=${theme}/type=${type}/*.parquet"
+
+            echo "==> Building DuckLake metadata for ${table} …"
+
+            local sample_file
+            sample_file=$(./duckdb -csv -noheader -c "
+              ${PREAMBLE}
+              SELECT file
+              FROM glob('${parquet_glob}')
+              ORDER BY file
+              LIMIT 1;
+            ")
+            [ -n "${sample_file}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
+
+            local files_literal
+            files_literal=$(
+              ./duckdb -csv -noheader -c "
+                ${PREAMBLE}
+                SELECT file
+                FROM glob('${parquet_glob}')
+                ORDER BY file;
+              " | python3 -c "import sys; files = [line.strip() for line in sys.stdin if line.strip()]; if not files: raise SystemExit('No parquet files returned from glob()'); print('[' + ', '.join(\"'\" + f.replace(\"'\", \"''\") + \"'\" for f in files) + ']')"
+            )
+
             ./duckdb -c "
-              INSTALL spatial;
-              LOAD spatial;
-              SET s3_region='us-west-2';
-              SET s3_use_ssl=true;
-              SET s3_access_key_id='';
-              SET s3_secret_access_key='';
-              -- Overture source files are Hilbert-sorted against a global (world) extent.
-              -- We re-sort against the UK extent so that row groups cluster tightly
-              -- within UK sub-regions, letting DuckDB-WASM skip far more row groups
-              -- when users query a city-sized bbox.
-              -- ST_Extent(ST_MakeEnvelope(...)) avoids a double-scan by using the known
-              -- UK bbox as the Hilbert bounds (all output rows are within it anyway).
-              COPY (
-                SELECT *
-                FROM read_parquet(
-                  '${BASE}/theme=${theme}/type=${type}/*.parquet',
-                  hive_partitioning=1
-                )
-                WHERE bbox IS NOT NULL
-                  AND bbox.xmax >= ${UK_WEST}  AND bbox.xmin <= ${UK_EAST}
-                  AND bbox.ymax >= ${UK_SOUTH} AND bbox.ymin <= ${UK_NORTH}
-                ORDER BY ST_Hilbert(
-                  geometry,
-                  ST_Extent(ST_MakeEnvelope(${UK_WEST}, ${UK_SOUTH}, ${UK_EAST}, ${UK_NORTH}))
-                )
-              ) TO 'dist/${out}' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 50000);
+              ${PREAMBLE}
+              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+              CREATE TABLE IF NOT EXISTS lake.${table} AS
+              SELECT * FROM read_parquet('${sample_file}')
+              WITH NO DATA;
+              CALL ducklake_add_data_files('lake', '${table}', ${files_literal});
             "
-            echo "    done — $(du -sh dist/${out} | cut -f1)"
           }
 
-          run_theme places       place    places_uk.parquet
-          run_theme addresses    address  addresses_uk.parquet
-          run_theme buildings    building buildings_uk.parquet
-          run_theme divisions    division divisions_uk.parquet
-          run_theme transportation segment  segments_uk.parquet
+          rm -f dist/overture_uk.ducklake
+          ./duckdb -c "
+            ${PREAMBLE}
+            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+          "
 
-          echo "--- Final file sizes ---"
-          du -sh dist/*.parquet
+          build_ducklake_table places         place    places_raw
+          build_ducklake_table addresses      address  addresses_raw
+          build_ducklake_table buildings      building buildings_raw
+          build_ducklake_table divisions      division divisions_raw
+          build_ducklake_table transportation segment  segments_raw
 
-      - name: Create or update GitHub Release and upload Parquets
+          echo "--- DuckLake catalog size ---"
+          du -sh dist/overture_uk.ducklake
+
+      - name: Create or update GitHub Release and upload DuckLake catalog
         env:
           GH_TOKEN: ${{ github.token }}
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
@@ -119,18 +147,14 @@ jobs:
           gh release create "${TAG}" \
             --repo "${{ github.repository }}" \
             --title "${TITLE}" \
-            --notes "UK-bbox-filtered Overture Maps Parquets built from the \`${OVERTURE_RELEASE}\` release.
+            --notes "DuckLake catalog built from the \`${OVERTURE_RELEASE}\` Overture release.
           Bounding box: west=${UK_WEST} east=${UK_EAST} south=${UK_SOUTH} north=${UK_NORTH}
 
           Files:
-          - \`places_uk.parquet\`
-          - \`addresses_uk.parquet\`
-          - \`buildings_uk.parquet\`
-          - \`divisions_uk.parquet\`
-          - \`segments_uk.parquet\`" \
+          - \`overture_uk.ducklake\`" \
             --latest \
             || true   # ignore 'already exists' error
 
-          gh release upload "${TAG}" dist/*.parquet \
+          gh release upload "${TAG}" dist/overture_uk.ducklake \
             --repo "${{ github.repository }}" \
             --clobber
