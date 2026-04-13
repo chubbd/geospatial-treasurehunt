@@ -60,10 +60,13 @@ Then open `http://localhost:8080` in your browser.
 
 ## Overture Data Source
 
-Data is served from **GitHub Release assets** in this repository.  The release is
-tagged `overture-uk-{overture_release}` (e.g. `overture-uk-2026-03-18.0`) and
-contains one ZSTD-compressed Parquet file per theme, pre-filtered to the UK
-bounding box and **Hilbert-re-sorted against the UK extent**:
+The app now prefers **GitHub Release assets** in this repository and falls back to
+a tiny same-origin **DuckLake catalog** that points at Overture's public S3 files
+when the browser cannot read the release assets directly.
+
+The release is tagged `overture-uk-{overture_release}` (e.g.
+`overture-uk-2026-03-18.0`) and contains UK-filtered Parquet assets plus an
+`overture_uk.ducklake` catalog:
 
 ```
 https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
@@ -72,11 +75,13 @@ https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-
   buildings_uk.parquet
   divisions_uk.parquet
   segments_uk.parquet
+  overture_uk.ducklake
 ```
 
-DuckDB reads a single Parquet footer per theme (one HTTP round trip) instead of
-discovering and reading headers from hundreds of S3 partition files.  This cuts
-browser initialisation from ~20–30 s to ~2–5 s.
+When GitHub Releases are readable from the browser, DuckDB reads a single Parquet
+footer per theme instead of discovering headers from hundreds of S3 partition
+files. When that path is blocked by browser/CORS behavior, the fallback DuckLake
+catalog keeps the site working without hosting the full dataset on GitHub Pages.
 
 **Why Hilbert re-sort?**  Overture's source files are already Hilbert-sorted, but
 against a global (world) extent.  Re-sorting the UK subset against the UK extent
@@ -91,9 +96,10 @@ Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
 
 1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
 2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
-3. The workflow installs DuckDB 1.5.1 + spatial extension, downloads the source
-   data from the Overture public S3 bucket, filters to the UK bbox, re-sorts by
-   Hilbert curve (UK extent), and uploads new Parquet files to a matching release.
+3. The workflow installs DuckDB 1.5.1 + spatial/ducklake extensions, downloads the
+   source data from the Overture public S3 bucket, filters to the UK bbox,
+   re-sorts by Hilbert curve (UK extent), builds a small `overture_uk.ducklake`
+   catalog, and uploads everything to a matching release.
 4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
 
 ---
@@ -128,11 +134,12 @@ WHERE xmax >= west  AND xmin <= east
 index.html          ← entire app (single static file)
   ├─ MapLibre GL    ← map rendering (CDN)
   └─ DuckDB-WASM    ← in-browser SQL engine (CDN / jsDelivr)
-       └─ httpfs    ← reads single Parquet files from GitHub Releases via HTTP range requests
+       ├─ httpfs    ← reads Parquet files and the hosted DuckLake catalog
+       └─ ducklake  ← fallback catalog pointing at Overture S3 Parquet files
 
 .github/workflows/
-  build-uk-parquets.yml  ← builds & publishes the UK Parquet Release assets
-  deploy.yml             ← deploys index.html to GitHub Pages
+  build-uk-parquets.yml  ← builds Parquet release assets + DuckLake catalog
+  deploy.yml             ← deploys index.html and overture_uk.ducklake to GitHub Pages
 ```
 
 No build step. No server. No API keys needed.
