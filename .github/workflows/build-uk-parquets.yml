@@ -1,7 +1,8 @@
 name: Build UK Overture Parquets
 
 # Builds UK-bbox-filtered, Hilbert-re-sorted Parquet files from the Overture
-# Maps public S3 bucket and uploads them as GitHub Release assets.
+# Maps public S3 bucket, plus a small DuckLake catalog that points at Overture's
+# public S3 Parquet files, and uploads them as GitHub Release assets.
 #
 # Why a single pre-filtered file per theme?
 #   DuckDB-WASM reads one Parquet footer instead of 200+ S3 partition footers,
@@ -22,7 +23,8 @@ name: Build UK Overture Parquets
 # Usage:
 #   Trigger manually via "Run workflow" in the Actions UI, optionally overriding
 #   the Overture release tag. The workflow creates (or updates) a GitHub Release
-#   tagged  overture-uk-{overture_release}  with five Parquet assets.
+#   tagged  overture-uk-{overture_release}  with Parquet assets plus
+#   overture_uk.ducklake.
 #
 # The release tag used here MUST match OVERTURE_RELEASE in index.html.
 
@@ -163,6 +165,81 @@ jobs:
           print('manifest.json written:', json.dumps(manifest, indent=2))
           EOF
 
+      - name: Build DuckLake catalog
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
+
+          PREAMBLE="
+            INSTALL ducklake;
+            LOAD ducklake;
+            SET s3_region='us-west-2';
+            SET s3_use_ssl=true;
+            SET s3_access_key_id='';
+            SET s3_secret_access_key='';
+            SET temp_directory='/tmp';
+            SET memory_limit='14GB';
+            SET threads=2;
+          "
+
+          build_ducklake_table() {
+            local theme="$1" type="$2" table="$3"
+            local parquet_glob="${BASE}/theme=${theme}/type=${type}/*.parquet"
+
+            echo "==> Building DuckLake metadata for ${table} …"
+
+            local sample_file
+            sample_file=$(./duckdb -csv -noheader -c "
+              ${PREAMBLE}
+              SELECT file
+              FROM glob('${parquet_glob}')
+              ORDER BY file
+              LIMIT 1;
+            ")
+            [ -n "${sample_file}" ] || { echo "No parquet files found for ${parquet_glob}"; exit 1; }
+
+            local files_literal
+            files_literal=$(
+              ./duckdb -csv -noheader -c "
+                ${PREAMBLE}
+                SELECT file
+                FROM glob('${parquet_glob}')
+                ORDER BY file;
+              " | python3 - <<'EOF'
+              import sys
+              files = [line.strip() for line in sys.stdin if line.strip()]
+              if not files:
+                  raise SystemExit("No parquet files returned from glob()")
+              print("[" + ", ".join("'" + f.replace("'", "''") + "'" for f in files) + "]")
+              EOF
+            )
+
+            ./duckdb -c "
+              ${PREAMBLE}
+              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+              CREATE TABLE IF NOT EXISTS lake.${table} AS
+              SELECT * FROM read_parquet('${sample_file}')
+              WITH NO DATA;
+              CALL ducklake_add_data_files('lake', '${table}', ${files_literal});
+            "
+          }
+
+          rm -f dist/overture_uk.ducklake
+          ./duckdb -c "
+            ${PREAMBLE}
+            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+          "
+
+          build_ducklake_table places         place    places_raw
+          build_ducklake_table addresses      address  addresses_raw
+          build_ducklake_table buildings      building buildings_raw
+          build_ducklake_table divisions      division divisions_raw
+          build_ducklake_table transportation segment  segments_raw
+
+          echo "--- DuckLake catalog size ---"
+          du -sh dist/overture_uk.ducklake
+
       - name: Create or update GitHub Release and upload Parquets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -183,10 +260,11 @@ jobs:
           - \`addresses_uk.parquet\`
           - \`buildings_uk.parquet\`
           - \`divisions_uk.parquet\`
-          - \`segments_uk.parquet\`" \
+          - \`segments_uk.parquet\`
+          - \`overture_uk.ducklake\`" \
             --latest \
             || true   # ignore 'already exists' error
 
-          gh release upload "${TAG}" dist/*.parquet dist/manifest.json \
+          gh release upload "${TAG}" dist/*.parquet dist/manifest.json dist/overture_uk.ducklake \
             --repo "${{ github.repository }}" \
             --clobber
