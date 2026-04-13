@@ -274,10 +274,10 @@
     </div>
     <div class="muted">
       Query UK-pre-filtered <strong>Overture Maps</strong> Parquet files served from
-      <strong>GitHub Releases</strong> using <strong>DuckDB-WASM</strong> — all in the browser,
-      no backend needed. Data is pre-filtered to the UK bounding box, so each theme is a
-      single Parquet file instead of hundreds of S3 partitions — init takes ~2–5 s
-      instead of ~20–30 s.
+      <strong>GitHub Releases</strong> when possible, with a same-origin
+      <strong>DuckLake</strong> catalog fallback that points at Overture's public S3
+      files. Everything runs in <strong>DuckDB-WASM</strong> in the browser — no
+      backend needed.
     </div>
   </div>
 
@@ -352,14 +352,15 @@
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
   // UK-filtered Parquet files are pre-built by the "Build UK Overture Parquets"
-  // workflow and uploaded as GitHub Release assets.  Each theme is a single file,
-  // so DuckDB reads one Parquet footer instead of 200+ S3 partition footers —
-  // cutting browser init from ~20–30 s down to ~2–5 s.
+  // workflow and uploaded as GitHub Release assets. When the browser cannot read
+  // those release assets directly (e.g. CORS), we fall back to a tiny same-origin
+  // DuckLake catalog file that points at Overture's public S3 Parquet data.
   //
   // To update data: run the workflow with the new Overture release tag, then
   // update OVERTURE_RELEASE below to match.
   const OVERTURE_RELEASE = "2026-03-18.0";
   const RELEASE_BASE     = `https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-${OVERTURE_RELEASE}`;
+  const DUCKLAKE_CATALOG = "overture_uk.ducklake";
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -808,6 +809,69 @@ LIMIT 20;`
     }
   }
 
+  async function createRawViewsFromReleaseAssets(manifest) {
+    function parquetSql(key) {
+      const files = manifest[key] || [`${key}.parquet`];
+      const urls  = files.map(f => `'${RELEASE_BASE}/${f}'`).join(", ");
+      return files.length === 1 ? urls : `[${urls}]`;
+    }
+
+    setStatus("Creating raw views from GitHub Release assets…");
+    await conn.query(`
+      CREATE OR REPLACE VIEW places_raw AS
+      SELECT * FROM read_parquet(${parquetSql('places_uk')});
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW addresses_raw AS
+      SELECT * FROM read_parquet(${parquetSql('addresses_uk')});
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW buildings_raw AS
+      SELECT * FROM read_parquet(${parquetSql('buildings_uk')});
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW divisions_raw AS
+      SELECT * FROM read_parquet(${parquetSql('divisions_uk')});
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW segments_raw AS
+      SELECT * FROM read_parquet(${parquetSql('segments_uk')});
+    `);
+
+    return "GitHub Release assets";
+  }
+
+  async function createRawViewsFromDuckLake() {
+    setStatus("Loading DuckLake fallback catalog…");
+    await conn.query(`INSTALL ducklake;`);
+    await conn.query(`LOAD ducklake;`);
+    await conn.query(`ATTACH 'ducklake:${DUCKLAKE_CATALOG}' AS overture_catalog;`);
+
+    setStatus("Creating raw views from DuckLake catalog…");
+    await conn.query(`
+      CREATE OR REPLACE VIEW places_raw AS
+      SELECT * FROM overture_catalog.places_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW addresses_raw AS
+      SELECT * FROM overture_catalog.addresses_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW buildings_raw AS
+      SELECT * FROM overture_catalog.buildings_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW divisions_raw AS
+      SELECT * FROM overture_catalog.divisions_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW segments_raw AS
+      SELECT * FROM overture_catalog.segments_raw;
+    `);
+
+    return "DuckLake catalog";
+  }
+
   // ---------------------------------------------------------------------------
   // DuckDB initialisation
   // ---------------------------------------------------------------------------
@@ -840,32 +904,26 @@ LIMIT 20;`
         console.warn("spatial extension not available; ST_* functions will not work");
       }
 
-      // Raw views — each points at a single pre-filtered UK Parquet served from
-      // GitHub Releases.  DuckDB reads one file footer (one HTTP round trip)
-      // rather than hundreds of S3 partition footers, so initialisation is fast.
-      setStatus("Creating raw views from GitHub Release assets…");
-      await conn.query(`
-        CREATE OR REPLACE VIEW places_raw AS
-        SELECT * FROM read_parquet('${RELEASE_BASE}/places_uk.parquet');
-      `);
-      await conn.query(`
-        CREATE OR REPLACE VIEW addresses_raw AS
-        SELECT * FROM read_parquet('${RELEASE_BASE}/addresses_uk.parquet');
-      `);
-      await conn.query(`
-        CREATE OR REPLACE VIEW buildings_raw AS
-        SELECT * FROM read_parquet('${RELEASE_BASE}/buildings_uk.parquet');
-      `);
-      await conn.query(`
-        CREATE OR REPLACE VIEW divisions_raw AS
-        SELECT * FROM read_parquet('${RELEASE_BASE}/divisions_uk.parquet');
-      `);
-      await conn.query(`
-        CREATE OR REPLACE VIEW segments_raw AS
-        SELECT * FROM read_parquet('${RELEASE_BASE}/segments_uk.parquet');
-      `);
+      // Fetch the manifest so we know how many shards each theme has.
+      // Buildings and segments may be split into multiple < 2 GB files.
+      setStatus("Fetching asset manifest…");
+      let manifest = {};
+      try {
+        const resp = await fetch(`${RELEASE_BASE}/manifest.json`);
+        if (resp.ok) manifest = await resp.json();
+      } catch (e) {
+        console.warn("Could not fetch manifest.json; falling back to single-file names", e);
+      }
 
-      setStatus("Creating friendly projected views…");
+      let rawViewSource = "GitHub Release assets";
+      try {
+        rawViewSource = await createRawViewsFromReleaseAssets(manifest);
+      } catch (releaseErr) {
+        console.warn("GitHub Release asset init failed; falling back to DuckLake:", releaseErr);
+        rawViewSource = await createRawViewsFromDuckLake();
+      }
+
+      setStatus(`Creating friendly projected views… (${rawViewSource})`);
 
       // ── Places projected view ──────────────────────────────────────────────
       // Geometry is GeoParquet (WKB) since the 2026 releases; use bbox centroid
@@ -1067,7 +1125,7 @@ LIMIT 20;`
         segmentsViewOk  ? "segments_uk ✓"  : "segments_uk ✗ (use segments_raw)",
       ].join("  |  ");
 
-      setStatus(`DuckDB ready — ${viewSummary}`, "ok");
+      setStatus(`DuckDB ready (${rawViewSource}) — ${viewSummary}`, "ok");
     } catch (err) {
       console.error("DuckDB init error:", err);
       setStatus(`Initialization failed: ${err.message}`, "err");

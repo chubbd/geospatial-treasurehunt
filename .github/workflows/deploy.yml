@@ -25,6 +25,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download DuckLake catalog for current release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OVERTURE_RELEASE=$(python3 - <<'PY'
+          import pathlib, re
+          text = pathlib.Path('index.html').read_text()
+          match = re.search(r'const OVERTURE_RELEASE = "([^"]+)";', text)
+          if not match:
+              raise SystemExit('Could not find OVERTURE_RELEASE in index.html')
+          print(match.group(1))
+          PY
+          )
+          gh release download "overture-uk-${OVERTURE_RELEASE}" \
+            --repo "${{ github.repository }}" \
+            --pattern "overture_uk.ducklake" \
+            --dir .
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
