@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - copilot/create-mvp-browser-based-treasure-hunt
+      - copilot/deploy-changes-to-pages
 
 permissions:
   contents: read
@@ -16,6 +17,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  OVERTURE_RELEASE: "2026-03-18.0"
 
 jobs:
   deploy:
@@ -29,15 +31,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          OVERTURE_RELEASE=$(python3 - <<'PY'
-          import pathlib, re
-          text = pathlib.Path('index.html').read_text()
-          match = re.search(r'const OVERTURE_RELEASE = "([^"]+)";', text)
-          if not match:
-              raise SystemExit('Could not find OVERTURE_RELEASE in index.html')
-          print(match.group(1))
-          PY
-          )
           gh release download "overture-uk-${OVERTURE_RELEASE}" \
             --repo "${{ github.repository }}" \
             --pattern "overture_uk.ducklake" \
