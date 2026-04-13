@@ -905,7 +905,7 @@ LIMIT 20;`
       }
 
       // Fetch the manifest so we know how many shards each theme has.
-      // Buildings and segments may be split into multiple <2 GB files.
+      // Buildings and segments may be split into multiple < 2 GB files.
       setStatus("Fetching asset manifest…");
       let manifest = {};
       try {

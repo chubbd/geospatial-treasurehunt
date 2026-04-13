@@ -110,7 +110,7 @@ jobs:
             echo "    done — $(du -sh dist/${out} | cut -f1)"
           }
 
-          # Sharded output for large themes (> 2 GB GitHub asset limit).
+          # Sharded output for large themes (kept below the 2 GB GitHub asset limit).
           # DuckDB writes data_0.parquet, data_1.parquet … into a temp directory;
           # we then move them to dist/ as ${out_base}_0.parquet, _1.parquet, …
           run_theme_sharded() {
@@ -197,7 +197,7 @@ jobs:
               ORDER BY file
               LIMIT 1;
             ")
-            [ -n "${sample_file}" ] || { echo "No parquet files found for ${parquet_glob}"; exit 1; }
+            [ -n "${sample_file}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
 
             local files_literal
             files_literal=$(
