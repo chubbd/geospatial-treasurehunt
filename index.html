@@ -841,7 +841,7 @@ LIMIT 20;`
     // fall back to the GitHub Release asset if that returns a 404 (e.g. mid-deploy).
     setStatus("Fetching DuckLake catalog…");
     let resp = await fetch(DUCKLAKE_CATALOG);
-    if (resp.status === 404) {
+    if (!resp.ok) {
       setStatus("Fetching DuckLake catalog from release asset…");
       resp = await fetch(RELEASE_CATALOG_URL);
     }
