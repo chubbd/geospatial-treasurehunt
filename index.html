@@ -917,11 +917,17 @@ LIMIT 20;`
       // fail with "Failed to fetch" in browser environments.
       setStatus("Loading httpfs extension…");
       await conn.query(`LOAD httpfs;`);
-      // httpfs retry / resilience tuning (must be set after LOAD httpfs).
-      //await conn.query(`SET http_retries=3;`);
-      //await conn.query(`SET http_retry_wait_ms=100;`);
-      //await conn.query(`SET http_retry_backoff=4;`);
-
+      
+      // Work around a DuckDB-WASM spatial/CRS initialization issue seen with
+      // GeoParquet files. Forcing the default coordinate systems to initialize
+      // before LOAD spatial can avoid `stoi: no conversion` during GeoParquet
+      // metadata handling in some 1.33.1-dev builds.
+      try {
+        await conn.query(`SELECT * FROM duckdb_coordinate_systems();`);
+      } catch (e) {
+        console.warn("duckdb_coordinate_systems() warm-up failed:", e.message);
+      }
+      
       // spatial is optional — ST_* functions need it but the projected views
       // below use only bbox arithmetic, so init succeeds either way.
       try {
