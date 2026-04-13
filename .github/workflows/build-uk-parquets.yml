@@ -107,7 +107,7 @@ jobs:
                 SELECT file
                 FROM glob('${parquet_glob}')
                 ORDER BY file;
-              " | python3 -c "import sys; files = [line.strip() for line in sys.stdin if line.strip()]; if not files: raise SystemExit('No parquet files returned from glob()'); print('[' + ', '.join(\"'\" + f.replace(\"'\", \"''\") + \"'\" for f in files) + ']')"
+              " | python3 -c "import sys; files = [line.strip() for line in sys.stdin if line.strip()] or sys.exit('No parquet files returned from glob()'); print('[' + ', '.join(\"'\" + f.replace(\"'\", \"''\") + \"'\" for f in files) + ']')"
             )
 
             ./duckdb -c "
