@@ -3,8 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches:
-      - copilot/create-mvp-browser-based-treasure-hunt
-      - copilot/deploy-changes-to-pages
+      - main
 
 permissions:
   contents: read
