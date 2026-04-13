@@ -118,7 +118,7 @@ jobs:
             # Create the table schema once using the first file.
             ./duckdb -c "
               ${PREAMBLE}
-              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
               CREATE TABLE IF NOT EXISTS lake.${table} AS
               SELECT
               * EXCLUDE (geometry),
@@ -132,7 +132,7 @@ jobs:
               echo "  Adding ${parquet_file} …"
               ./duckdb -c "
                 ${PREAMBLE}
-                ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+                ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
                 CALL ducklake_add_data_files('lake', '${table}', '${parquet_file}');
               " > /dev/null
             done <<< "${all_files}"
@@ -141,7 +141,7 @@ jobs:
           rm -f dist/overture_uk.ducklake
           ./duckdb -c "
             ${PREAMBLE}
-            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
           " > /dev/null
 
           build_ducklake_table places         place    places_raw
@@ -172,31 +172,6 @@ jobs:
             SELECT 'divisions_raw' AS table, COUNT(*) AS n FROM lake.divisions_raw LIMIT 0;
             SELECT 'segments_raw'  AS table, COUNT(*) AS n FROM lake.segments_raw  LIMIT 0;
           "
-
-      - name: Create or update GitHub Release and upload DuckLake catalog
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
-        run: |
-          TAG="overture-uk-${OVERTURE_RELEASE}"
-          TITLE="Overture UK Data (${OVERTURE_RELEASE})"
-
-          # Create release if it does not already exist; --clobber updates assets.
-          gh release create "${TAG}" \
-            --repo "${{ github.repository }}" \
-            --title "${TITLE}" \
-            --notes "DuckLake catalog built from the \`${OVERTURE_RELEASE}\` Overture release.
-          Bounding box: west=${UK_WEST} east=${UK_EAST} south=${UK_SOUTH} north=${UK_NORTH}
-
-          Files:
-          - \`overture_uk.ducklake\`" \
-            --latest \
-            || true   # ignore 'already exists' error
-
-          gh release upload "${TAG}" dist/overture_uk.ducklake \
-            --repo "${{ github.repository }}" \
-            --clobber
-
       - name: Commit DuckLake catalog to repo
         env:
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
