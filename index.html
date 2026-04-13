@@ -904,9 +904,9 @@ LIMIT 20;`
       setStatus("Loading httpfs extension…");
       await conn.query(`LOAD httpfs;`);
       // httpfs retry / resilience tuning (must be set after LOAD httpfs).
-      await conn.query(`SET http_retries=3;`);
-      await conn.query(`SET http_retry_wait_ms=100;`);
-      await conn.query(`SET http_retry_backoff=4;`);
+      //await conn.query(`SET http_retries=3;`);
+      //await conn.query(`SET http_retry_wait_ms=100;`);
+      //await conn.query(`SET http_retry_backoff=4;`);
 
       // spatial is optional — ST_* functions need it but the projected views
       // below use only bbox arithmetic, so init succeeds either way.
