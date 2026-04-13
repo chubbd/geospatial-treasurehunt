@@ -81,6 +81,7 @@ jobs:
             LOAD ducklake;
             INSTALL httpfs;
             LOAD httpfs;
+            SET enable_geoparquet = false;
             CREATE OR REPLACE SECRET overture_s3 (
               TYPE s3,
               PROVIDER config,
