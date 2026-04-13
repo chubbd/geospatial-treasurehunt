@@ -8,7 +8,31 @@
     ⚠️  IMPORTANT: This app uses SharedArrayBuffer (required by DuckDB-WASM).
         It MUST be served over HTTP(S) — e.g. GitHub Pages — NOT opened via file://.
         Opening via file:// will fail with cross-origin isolation errors.
+        The coi-serviceworker below injects COOP/COEP headers so that
+        crossOriginIsolated=true and SharedArrayBuffer is available even on
+        GitHub Pages (which does not serve those headers natively).
   -->
+  <script>
+    // Register the COI service worker on first load; reload once it is active
+    // so that the page runs with Cross-Origin isolation from the start.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("coi-serviceworker.js")
+        .then((reg) => {
+          // If the SW was just installed (not yet controlling), reload so the
+          // new COOP/COEP headers take effect immediately.
+          if (!navigator.serviceWorker.controller) {
+            reg.addEventListener("updatefound", () => {
+              reg.installing &&
+                reg.installing.addEventListener("statechange", (e) => {
+                  if (e.target.state === "activated") location.reload();
+                });
+            });
+          }
+        })
+        .catch(console.error);
+    }
+  </script>
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
     :root {
