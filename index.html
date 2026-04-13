@@ -898,16 +898,15 @@ LIMIT 20;`
       // Permit the planner to reorder output rows, unlocking faster parallel
       // aggregation and hash-join paths.
       await conn.query(`SET preserve_insertion_order=false;`);
-      // httpfs retry / resilience tuning.
-      await conn.query(`SET http_retries=3;`);
-      await conn.query(`SET http_retry_wait_ms=100;`);
-      await conn.query(`SET http_retry_backoff=4;`);
-
       // httpfs is compiled into the DuckDB-WASM EH bundle — LOAD only, no INSTALL.
       // INSTALL would try to download a binary from extensions.duckdb.org and
       // fail with "Failed to fetch" in browser environments.
       setStatus("Loading httpfs extension…");
       await conn.query(`LOAD httpfs;`);
+      // httpfs retry / resilience tuning (must be set after LOAD httpfs).
+      await conn.query(`SET http_retries=3;`);
+      await conn.query(`SET http_retry_wait_ms=100;`);
+      await conn.query(`SET http_retry_backoff=4;`);
 
       // spatial is optional — ST_* functions need it but the projected views
       // below use only bbox arithmetic, so init succeeds either way.
