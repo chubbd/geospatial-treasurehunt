@@ -10,11 +10,22 @@ self.addEventListener("activate", (event) =>
 
 async function handleFetch(request) {
   if (request.cache === "only-if-cached" && request.mode !== "same-origin") {
-    return;
+    return new Response("", {
+      status: 504,
+      statusText: "Gateway Timeout",
+    });
   }
 
-  const r = await fetch(request).catch((e) => console.error(e));
-  if (!r) return;
+  let r;
+  try {
+    r = await fetch(request);
+  } catch (e) {
+    console.error(e);
+    return new Response(e.toString(), {
+      status: 502,
+      statusText: "Bad Gateway",
+    });
+  }
 
   const newHeaders = new Headers(r.headers);
   newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
