@@ -33,7 +33,7 @@
         .catch(console.error);
     }
   </script>
-  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" crossorigin="anonymous" />
   <style>
     :root {
       --bg: #0b1220;
@@ -366,9 +366,9 @@
   </div>
 </main>
 
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
 <script type="module">
-  import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm";
+  import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev48.0/+esm";
 
   // ---------------------------------------------------------------------------
   // Constants
@@ -827,8 +827,16 @@ LIMIT 20;`
   }
 
   async function createRawViewsFromDuckLake() {
+    // Fetch the .ducklake catalog file and register it in the WASM virtual
+    // filesystem so the ducklake extension can open it by name.
+    setStatus("Fetching DuckLake catalog…");
+    const resp = await fetch(DUCKLAKE_CATALOG);
+    if (!resp.ok) throw new Error(`Failed to fetch catalog: ${resp.status} ${resp.statusText}`);
+    const buf = await resp.arrayBuffer();
+    await db.registerFileBuffer(DUCKLAKE_CATALOG, new Uint8Array(buf));
+
     setStatus("Loading DuckLake catalog…");
-    await conn.query(`INSTALL ducklake;`);
+    // ducklake is compiled into duckdb-wasm 1.33.1+, so INSTALL is not needed.
     await conn.query(`LOAD ducklake;`);
     await conn.query(`ATTACH 'ducklake:${DUCKLAKE_CATALOG}' AS overture_catalog;`);
 

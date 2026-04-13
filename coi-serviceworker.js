@@ -27,6 +27,14 @@ async function handleFetch(request) {
     });
   }
 
+  // Opaque responses (no-cors fetches) have status 0 and an unreadable body.
+  // Trying to construct new Response(body, { status: 0 }) throws a RangeError
+  // because status must be in [200, 599].  Pass them through unchanged; the
+  // browser's COEP enforcement will deal with them separately.
+  if (r.status === 0) {
+    return r;
+  }
+
   const newHeaders = new Headers(r.headers);
   newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
   newHeaders.set("Cross-Origin-Embedder-Policy", "require-corp");
