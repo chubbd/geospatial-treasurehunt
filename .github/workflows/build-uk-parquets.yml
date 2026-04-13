@@ -100,16 +100,6 @@ jobs:
             ")
             [ -n "${sample_file}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
 
-            local files_literal
-            files_literal=$(
-              ./duckdb -csv -noheader -c "
-                ${PREAMBLE}
-                SELECT file
-                FROM glob('${parquet_glob}')
-                ORDER BY file;
-              " | python3 -c "import sys; files = [line.strip() for line in sys.stdin if line.strip()] or sys.exit('No parquet files returned from glob()'); print('[' + ', '.join(\"'\" + f.replace(\"'\", \"''\") + \"'\" for f in files) + ']')"
-            )
-
             ./duckdb -c "
               ${PREAMBLE}
               ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
@@ -119,7 +109,7 @@ jobs:
               CAST(geometry AS BLOB) AS geometry
               FROM read_parquet('${sample_file}')
               WITH NO DATA;
-              CALL ducklake_add_data_files('lake', '${table}', ${files_literal});
+              CALL ducklake_add_data_files('lake', '${table}', '${parquet_glob}');
             "
           }
 
