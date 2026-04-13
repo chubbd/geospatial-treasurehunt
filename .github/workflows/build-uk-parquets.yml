@@ -50,6 +50,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # optional, but harmless and useful if you ever need history/tags
       - name: Install DuckDB CLI
         run: |
           curl -fsSL \
