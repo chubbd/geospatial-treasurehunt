@@ -40,7 +40,7 @@ permissions:
   contents: write   # needed to create/update releases
 
 env:
-  DUCKDB_VERSION: '1.5.1'
+  DUCKDB_VERSION: '1.5.2'
   UK_WEST:  '-8.75'
   UK_SOUTH: '49.80'
   UK_EAST:  '1.90'
