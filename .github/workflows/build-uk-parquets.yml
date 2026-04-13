@@ -90,16 +90,20 @@ jobs:
 
             echo "==> Building DuckLake metadata for ${table} …"
 
-            local sample_file
-            sample_file=$(./duckdb -csv -noheader -c "
+            # Fetch the full list of matching Parquet files.
+            local all_files
+            all_files=$(./duckdb -csv -noheader -c "
               ${PREAMBLE}
               SELECT file
               FROM glob('${parquet_glob}')
-              ORDER BY file
-              LIMIT 1;
+              ORDER BY file;
             ")
-            [ -n "${sample_file}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
+            [ -n "${all_files}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
 
+            local sample_file
+            sample_file=$(echo "${all_files}" | head -1)
+
+            # Create the table schema once using the first file.
             ./duckdb -c "
               ${PREAMBLE}
               ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
@@ -109,8 +113,17 @@ jobs:
               CAST(geometry AS BLOB) AS geometry
               FROM read_parquet('${sample_file}')
               WITH NO DATA;
-              CALL ducklake_add_data_files('lake', '${table}', '${parquet_glob}');
             "
+
+            # Register each Parquet file individually.
+            while IFS= read -r parquet_file; do
+              echo "  Adding ${parquet_file} …"
+              ./duckdb -c "
+                ${PREAMBLE}
+                ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+                CALL ducklake_add_data_files('lake', '${table}', '${parquet_file}');
+              "
+            done <<< "${all_files}"
           }
 
           rm -f dist/overture_uk.ducklake
