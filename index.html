@@ -851,6 +851,28 @@ LIMIT 20;`
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
 
+      // ── Resource limits ───────────────────────────────────────────────────
+      // Cap memory well below the hard 4 GB WASM address-space ceiling.
+      await conn.query(`SET memory_limit='3.3GB';`);
+      // Two worker threads keep us within typical browser/OS restrictions.
+      await conn.query(`SET threads=2;`);
+      // Route spill/temp files to WASM MEMFS /tmp.  500 MB is a comfortable
+      // ceiling given that MEMFS is RAM-backed anyway; adjust if needed.
+      await conn.query(`SET temp_directory='/tmp/duckdb_tmp';`);
+      await conn.query(`SET max_temp_directory_size='500MB';`);
+
+      // ── Performance tuning ────────────────────────────────────────────────
+      // Cache remote Parquet footers in memory — avoids re-fetching metadata
+      // on every query when reading from httpfs.
+      await conn.query(`SET enable_object_cache=true;`);
+      // Permit the planner to reorder output rows, unlocking faster parallel
+      // aggregation and hash-join paths.
+      await conn.query(`SET preserve_insertion_order=false;`);
+      // httpfs retry / resilience tuning.
+      await conn.query(`SET http_retries=3;`);
+      await conn.query(`SET http_retry_wait_ms=100;`);
+      await conn.query(`SET http_retry_backoff=4;`);
+
       // httpfs is compiled into the DuckDB-WASM EH bundle — LOAD only, no INSTALL.
       // INSTALL would try to download a binary from extensions.duckdb.org and
       // fail with "Failed to fetch" in browser environments.
