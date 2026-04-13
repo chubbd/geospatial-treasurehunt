@@ -368,7 +368,7 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
 <script type="module">
-  import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm";
+  import * as duckdb from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev48.0/+esm";
 
   // ---------------------------------------------------------------------------
   // Constants
@@ -827,48 +827,40 @@ LIMIT 20;`
   }
 
   async function createRawViewsFromDuckLake() {
-    // The .ducklake file is a plain DuckDB database containing a metadata table
-    // (ducklake_data_file) with the explicit S3 paths for every Parquet shard.
-    // We fetch it as a buffer, register it in the WASM virtual filesystem, then
-    // ATTACH it as a regular DuckDB database — no ducklake extension required.
-    // Reading explicit S3 paths avoids S3 ListObjects calls (which are CORS-blocked
-    // in the browser) and works with httpfs's anonymous GET requests.
+    // Fetch the .ducklake catalog file and register it in the WASM virtual
+    // filesystem so the ducklake extension can open it by name.
     setStatus("Fetching DuckLake catalog…");
     const resp = await fetch(DUCKLAKE_CATALOG);
     if (!resp.ok) throw new Error(`Failed to fetch catalog: ${resp.status} ${resp.statusText}`);
     const buf = await resp.arrayBuffer();
     await db.registerFileBuffer(DUCKLAKE_CATALOG, new Uint8Array(buf));
 
-    await conn.query(`ATTACH '${DUCKLAKE_CATALOG}' AS ducklake_db (READ_ONLY);`);
+    setStatus("Loading DuckLake catalog…");
+    // ducklake is compiled into duckdb-wasm 1.33.1+, so INSTALL is not needed.
+    await conn.query(`LOAD ducklake;`);
+    await conn.query(`ATTACH 'ducklake:${DUCKLAKE_CATALOG}' AS overture_catalog;`);
 
-    // Read S3 paths for each table from the catalog metadata.
-    setStatus("Reading DuckLake catalog metadata…");
-    const tableNames = ["places_raw", "addresses_raw", "buildings_raw", "divisions_raw", "segments_raw"];
-    const pathsMap = {};
-    for (const tname of tableNames) {
-      const result = await conn.query(`
-        SELECT f.path
-        FROM ducklake_db.ducklake_table t
-        JOIN ducklake_db.ducklake_data_file f ON t.table_id = f.table_id
-        WHERE t.table_name = '${tname}'
-        ORDER BY f.data_file_id;
-      `);
-      pathsMap[tname] = result.toArray().map(r => r.toJSON().path);
-    }
-
-    await conn.query(`DETACH ducklake_db;`);
-
-    // Create raw views pointing directly at the explicit S3 Parquet files.
     setStatus("Creating raw views from DuckLake catalog…");
-    for (const [tname, paths] of Object.entries(pathsMap)) {
-      if (!paths.length) { console.warn(`No files found for ${tname}`); continue; }
-      const quoted = paths.map(p => `'${p.replace(/'/g, "''")}'`).join(", ");
-      const parquetArg = paths.length === 1 ? quoted : `[${quoted}]`;
-      await conn.query(`
-        CREATE OR REPLACE VIEW ${tname} AS
-        SELECT * FROM read_parquet(${parquetArg});
-      `);
-    }
+    await conn.query(`
+      CREATE OR REPLACE VIEW places_raw AS
+      SELECT * FROM overture_catalog.places_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW addresses_raw AS
+      SELECT * FROM overture_catalog.addresses_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW buildings_raw AS
+      SELECT * FROM overture_catalog.buildings_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW divisions_raw AS
+      SELECT * FROM overture_catalog.divisions_raw;
+    `);
+    await conn.query(`
+      CREATE OR REPLACE VIEW segments_raw AS
+      SELECT * FROM overture_catalog.segments_raw;
+    `);
 
     return "DuckLake catalog";
   }
