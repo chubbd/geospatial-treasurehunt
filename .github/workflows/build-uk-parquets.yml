@@ -97,13 +97,15 @@ jobs:
             echo "==> Building DuckLake metadata for ${table} …"
 
             # Fetch the full list of matching Parquet files.
+            # Filter with grep to discard any non-URL output produced by PREAMBLE
+            # statements (e.g. the "true" row emitted by CREATE OR REPLACE SECRET).
             local all_files
             all_files=$(./duckdb -csv -noheader -c "
               ${PREAMBLE}
               SELECT file
               FROM glob('${parquet_glob}')
               ORDER BY file;
-            ")
+            " | grep '^s3://')
             [ -n "${all_files}" ] || { echo "No Parquet files found for ${parquet_glob}"; exit 1; }
 
             local sample_file
