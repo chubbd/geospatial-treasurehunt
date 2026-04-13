@@ -75,10 +75,16 @@ jobs:
           PREAMBLE="
             INSTALL ducklake;
             LOAD ducklake;
-            SET s3_region='us-west-2';
-            SET s3_use_ssl=true;
-            SET s3_access_key_id='';
-            SET s3_secret_access_key='';
+            INSTALL httpfs;
+            LOAD httpfs;
+            CREATE OR REPLACE SECRET overture_s3 (
+              TYPE s3,
+              PROVIDER config,
+              KEY_ID '',
+              SECRET '',
+              REGION 'us-west-2',
+              USE_SSL true
+            );
             SET temp_directory='/tmp';
             SET memory_limit='14GB';
             SET threads=2;
@@ -140,6 +146,31 @@ jobs:
 
           echo "--- DuckLake catalog size ---"
           du -sh dist/overture_uk.ducklake
+
+      - name: Verify DuckLake catalog
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          echo "--- Verifying DuckLake file registrations ---"
+          ./duckdb -c "
+            INSTALL ducklake; LOAD ducklake;
+            INSTALL httpfs;   LOAD httpfs;
+            CREATE OR REPLACE SECRET overture_s3 (
+              TYPE s3, PROVIDER config,
+              KEY_ID '', SECRET '', REGION 'us-west-2', USE_SSL true
+            );
+            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
+            SELECT table_name, COUNT(*) AS registered_files
+            FROM (
+              SELECT 'places_raw'      AS table_name, filename FROM ducklake_data_files('lake', 'main', 'places_raw')      UNION ALL
+              SELECT 'addresses_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'addresses_raw')   UNION ALL
+              SELECT 'buildings_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'buildings_raw')   UNION ALL
+              SELECT 'divisions_raw'   AS table_name, filename FROM ducklake_data_files('lake', 'main', 'divisions_raw')   UNION ALL
+              SELECT 'segments_raw'    AS table_name, filename FROM ducklake_data_files('lake', 'main', 'segments_raw')
+            )
+            GROUP BY table_name
+            ORDER BY table_name;
+          "
 
       - name: Create or update GitHub Release and upload DuckLake catalog
         env:
