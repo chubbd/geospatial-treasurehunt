@@ -59,9 +59,9 @@ jobs:
           curl -fsSL \
             "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
             -o duckdb.zip
-          unzip -qo duckdb.zip
-          chmod +x duckdb
-          ./duckdb --version
+          unzip -qo duckdb.zip -d bin
+          chmod +x bin/duckdb
+          bin/duckdb --version
 
       - name: Build UK-filtered Parquets (disabled)
         run: |
@@ -74,6 +74,8 @@ jobs:
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
         run: |
           mkdir -p dist
+          mkdir -p bin
+          
           BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
 
           PREAMBLE="
@@ -105,7 +107,7 @@ jobs:
             # Filter with grep to discard any non-URL output produced by PREAMBLE
             # statements (e.g. the "true" row emitted by CREATE OR REPLACE SECRET).
             local all_files
-            all_files=$(./duckdb -csv -noheader -c "
+            all_files=$(bin/duckdb -csv -noheader -c "
               ${PREAMBLE}
               SELECT file
               FROM glob('${parquet_glob}')
@@ -117,7 +119,7 @@ jobs:
             sample_file=$(echo "${all_files}" | head -1)
 
             # Create the table schema once using the first file.
-            ./duckdb -c "
+            bin/duckdb -c "
               ${PREAMBLE}
               ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
               CREATE TABLE IF NOT EXISTS lake.${table} AS
@@ -131,7 +133,7 @@ jobs:
             # Register each Parquet file individually.
             while IFS= read -r parquet_file; do
               echo "  Adding ${parquet_file} …"
-              ./duckdb -c "
+              bin/duckdb -c "
                 ${PREAMBLE}
                 ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
                 CALL ducklake_add_data_files('lake', '${table}', '${parquet_file}');
@@ -140,7 +142,7 @@ jobs:
           }
 
           rm -f dist/overture_uk.ducklake
-          ./duckdb -c "
+          bin/duckdb -c "
             ${PREAMBLE}
             ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
           " > /dev/null
@@ -159,7 +161,7 @@ jobs:
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
         run: |
           echo "--- Verifying DuckLake file registrations ---"
-          ./duckdb -c "
+          bin/duckdb -c "
             INSTALL ducklake; LOAD ducklake;
             INSTALL httpfs;   LOAD httpfs;
             CREATE OR REPLACE SECRET overture_s3 (
