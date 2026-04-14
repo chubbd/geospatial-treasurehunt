@@ -897,7 +897,6 @@ LIMIT 20;`
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
       
-      await conn.query(`SET enable_geoparquet = false;`);
 
       // ── Resource limits ───────────────────────────────────────────────────
       // Cap memory well below the hard 4 GB WASM address-space ceiling.
@@ -938,6 +937,9 @@ LIMIT 20;`
         console.warn("spatial extension not available; ST_* functions will not work");
       }
 
+      await conn.query(`SET enable_geoparquet = false;`);
+
+      
       const rawViewSource = await createRawViewsFromDuckLake();
 
       setStatus(`Creating friendly projected views… (${rawViewSource})`);
