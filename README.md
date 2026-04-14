@@ -1,7 +1,8 @@
 # Geospatial SQL Treasure Hunt
 
 A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
-UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no backend required.
+[Overture Maps](https://overturemaps.org/) data scoped to **Greater London** —
+no backend required.
 
 ## Live Demo
 
@@ -20,9 +21,9 @@ UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no 
 | **Map** | MapLibre GL (dark basemap, click-to-inspect popups) |
 | **SQL editor** | Multi-line textarea with Ctrl/Cmd+Enter shortcut to run |
 | **Overture themes** | Places · Addresses · Buildings · Divisions · Transportation |
-| **UK-pre-filtered data** | One Parquet file per theme, pre-built to the UK bbox — no global scans |
-| **Schema inspection** | `DESCRIBE` demo queries for every theme |
-| **Defensive views** | Multiple fallback projections tried; graceful messaging when schemas differ |
+| **London-only materialisation** | `london_places`, `london_addresses`, `london_buildings` materialised in-memory at init — all queries instant |
+| **Schema inspection** | `DESCRIBE` demo queries for every theme (reads Parquet footer only) |
+| **Defensive loading** | Multiple fallback column projections tried; graceful messaging when schemas differ |
 | **Theme filter** | Filter the clue list by Overture theme |
 
 ---
@@ -32,7 +33,8 @@ UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no 
 1. Fork or clone this repository.
 2. Go to **Settings → Pages** and set the source branch to `main` (root `/`).
 3. GitHub will build and publish the site — usually within 60 seconds.
-4. Open the published URL, click **⚡ Init DuckDB**, wait ~2–5 s, then start exploring!
+4. Open the published URL, click **⚡ Init DuckDB**, wait **30–90 s** for the
+   one-time London data materialisation, then start exploring!
 
 ---
 
@@ -60,59 +62,40 @@ Then open `http://localhost:8080` in your browser.
 
 ## Overture Data Source
 
-The app now prefers **GitHub Release assets** in this repository and falls back to
-a tiny same-origin **DuckLake catalog** that points at Overture's public S3 files
-when the browser cannot read the release assets directly.
+On initialisation the app reads Overture's public Parquet files directly from
+the Overture S3 bucket (`s3://overturemaps-us-west-2`) via the DuckDB `httpfs`
+extension — no DuckLake catalog, no pre-built release assets needed.
 
-The release is tagged `overture-uk-{overture_release}` (e.g.
-`overture-uk-2026-03-18.0`) and contains UK-filtered Parquet assets plus an
-`overture_uk.ducklake` catalog:
+A London bounding-box filter is pushed down into the `read_parquet()` call so
+that only row groups intersecting Greater London are fetched.  The result is
+materialised as an in-memory DuckDB `TABLE` object for instant re-query.
 
+**Data path:**
 ```
-https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
-  places_uk.parquet
-  addresses_uk.parquet
-  buildings_uk.parquet
-  divisions_uk.parquet
-  segments_uk.parquet
-  overture_uk.ducklake
+s3://overturemaps-us-west-2/release/2026-03-18.0/theme=places/type=place/*.parquet
+s3://overturemaps-us-west-2/release/2026-03-18.0/theme=addresses/type=address/*.parquet
+s3://overturemaps-us-west-2/release/2026-03-18.0/theme=buildings/type=building/*.parquet
+...
 ```
 
-When GitHub Releases are readable from the browser, DuckDB reads a single Parquet
-footer per theme instead of discovering headers from hundreds of S3 partition
-files. When that path is blocked by browser/CORS behavior, the fallback DuckLake
-catalog keeps the site working without hosting the full dataset on GitHub Pages.
+### Updating the release tag
 
-**Why Hilbert re-sort?**  Overture's source files are already Hilbert-sorted, but
-against a global (world) extent.  Re-sorting the UK subset against the UK extent
-tightens the spatial clustering within each row group, so DuckDB-WASM can skip
-many more row groups when executing a city-sized bbox query (e.g. "all buildings
-in London"), making in-browser queries noticeably faster.  The build workflow uses
-DuckDB 1.5.1 for its improved geospatial handling and full GeoParquet support.
-
-### Rebuilding the data
-
-Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
-
-1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
-2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
-3. The workflow installs DuckDB 1.5.1 + spatial/ducklake extensions, downloads the
-   source data from the Overture public S3 bucket, filters to the UK bbox,
-   re-sorts by Hilbert curve (UK extent), builds a small `overture_uk.ducklake`
-   catalog, and uploads everything to a matching release.
-4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
+Set `OVERTURE_RELEASE` in `index.html` to the desired Overture release tag
+(e.g. `2026-04-15.0`).  No other changes are needed — the app reads directly
+from the public S3 bucket.
 
 ---
 
-## UK Bounding Box
+## London Bounding Box
 
-The Parquet files are pre-filtered to the UK bounding box, so no global scan is
-ever needed in the browser.  You can apply a tighter filter to zoom in on a city:
+All three materialised tables are pre-filtered to this bbox:
 
 ```
-west  = -8.75   east  =  1.90
-south = 49.80   north = 60.95
+west  = -0.51   east  = 0.33
+south = 51.28   north = 51.70
 ```
+
+You can apply a tighter filter to zoom in on a neighbourhood:
 
 **For point data (places, addresses):**
 ```sql
@@ -120,7 +103,7 @@ WHERE lon BETWEEN -0.20 AND -0.05
   AND lat BETWEEN 51.46 AND 51.56   -- central London
 ```
 
-**For object bboxes (buildings, divisions, segments):**
+**For object bboxes (buildings):**
 ```sql
 WHERE xmax >= west  AND xmin <= east
   AND ymax >= south AND ymin <= north
@@ -134,12 +117,38 @@ WHERE xmax >= west  AND xmin <= east
 index.html          ← entire app (single static file)
   ├─ MapLibre GL    ← map rendering (CDN)
   └─ DuckDB-WASM    ← in-browser SQL engine (CDN / jsDelivr)
-       ├─ httpfs    ← reads Parquet files and the hosted DuckLake catalog
-       └─ ducklake  ← fallback catalog pointing at Overture S3 Parquet files
+       ├─ httpfs    ← reads Overture Parquet files directly from S3
+       └─ spatial   ← enables ST_* geospatial functions
 
 .github/workflows/
-  build-uk-parquets.yml  ← builds Parquet release assets + DuckLake catalog
-  deploy.yml             ← deploys index.html and overture_uk.ducklake to GitHub Pages
+  deploy.yml        ← deploys index.html to GitHub Pages
 ```
 
 No build step. No server. No API keys needed.
+
+### Memory budget
+
+| Table | Approx. rows | In-memory (est.) |
+|---|---|---|
+| `london_places` | 50 000–80 000 | 6–12 MB |
+| `london_addresses` | 500 000–1.5 M | 60–180 MB |
+| `london_buildings` | 800 000–1.8 M | 90–250 MB |
+| **Total worst-case** | | **≈ 440 MB** |
+
+DuckDB-WASM hard ceiling: **4 GB**.  App `memory_limit`: **3.3 GB**.
+Headroom after London tables: **≈ 2.9 GB** — well within the soft limit.
+
+### Why no ART indexes?
+
+DuckDB ART indexes accelerate equality (`=`) and range lookups, but the typical
+teaching queries in this app use:
+
+- `lat/lon BETWEEN` — range covering 10–50 % of London rows (too low selectivity for ART to help)
+- `category ILIKE` — pattern match (ART cannot index `LIKE`/`ILIKE`)
+- `postcode ILIKE` — same
+
+A full vectorised columnar scan over 80 k places takes < 5 ms; over 1.5 M
+addresses < 50 ms.  ART indexes would add ~75–110 MB per column with no
+measurable query-time benefit for these patterns.  DuckDB's automatic zone-map
+(min-max) statistics per row-group already provide free range-scan optimisation.
+
