@@ -120,7 +120,7 @@ jobs:
             # Create the table schema once using the first file.
             bin/duckdb -c "
               ${PREAMBLE}
-              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
+              ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
               CREATE TABLE IF NOT EXISTS lake.${table} AS
               SELECT
               * EXCLUDE (geometry),
@@ -134,7 +134,7 @@ jobs:
               echo "  Adding ${parquet_file} …"
               bin/duckdb -c "
                 ${PREAMBLE}
-                ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
+                ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
                 CALL ducklake_add_data_files('lake', '${table}', '${parquet_file}');
               " > /dev/null
             done <<< "${all_files}"
@@ -143,7 +143,7 @@ jobs:
           rm -f dist/overture_uk.ducklake
           bin/duckdb -c "
             ${PREAMBLE}
-            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake (AUTOMATIC_MIGRATION);
+            ATTACH 'ducklake:dist/overture_uk.ducklake' AS lake;
           " > /dev/null
 
           build_ducklake_table places         place    places_raw
