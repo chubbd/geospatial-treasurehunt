@@ -896,6 +896,8 @@ LIMIT 20;`
       db = new duckdb.AsyncDuckDB(logger, new Worker(workerUrl));
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
+      
+      await conn.query(`SET enable_geoparquet = false;`);
 
       // ── Resource limits ───────────────────────────────────────────────────
       // Cap memory well below the hard 4 GB WASM address-space ceiling.
