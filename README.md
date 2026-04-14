@@ -1,7 +1,11 @@
 # Geospatial SQL Treasure Hunt
 
-A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
-UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no backend required.
+A browser-based geospatial treasure hunt and spatial SQL teaching experience
+powered by **DuckDB-WASM**. On startup the app queries
+[Overture Maps](https://overturemaps.org/) data from the public S3 bucket,
+filters to the **Greater London** bounding box, and materialises the results
+as in-memory DuckDB tables — no backend, no pre-built files, no DuckLake
+required.
 
 ## Live Demo
 
@@ -17,28 +21,32 @@ UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no 
 
 | Feature | Details |
 |---|---|
-| **Map** | MapLibre GL (dark basemap, click-to-inspect popups) |
+| **Map** | MapLibre GL (dark basemap, centred on London, click-to-inspect popups) |
 | **SQL editor** | Multi-line textarea with Ctrl/Cmd+Enter shortcut to run |
-| **Overture themes** | Places · Addresses · Buildings · Divisions · Transportation |
-| **UK-pre-filtered data** | One Parquet file per theme, pre-built to the UK bbox — no global scans |
-| **Schema inspection** | `DESCRIBE` demo queries for every theme |
-| **Defensive views** | Multiple fallback projections tried; graceful messaging when schemas differ |
-| **Theme filter** | Filter the clue list by Overture theme |
+| **London tables** | `london.places` · `london.addresses` · `london.buildings` |
+| **Polygon geometry** | `london.buildings` stores full polygon geometry for spatial queries |
+| **Spatial SQL** | `LOAD spatial;` — full ST_* function suite available after init |
+| **Clue themes** | Schema · Places · Addresses · Buildings · Spatial (distance, intersection, triangulation) |
 
 ---
 
-## Quick Start (GitHub Pages)
+## Quick Start
 
 1. Fork or clone this repository.
 2. Go to **Settings → Pages** and set the source branch to `main` (root `/`).
-3. GitHub will build and publish the site — usually within 60 seconds.
-4. Open the published URL, click **⚡ Init DuckDB**, wait ~2–5 s, then start exploring!
+3. GitHub will publish the site — usually within 60 seconds.
+4. Open the published URL, click **⚡ Init DuckDB**, wait for the London tables to
+   materialise (~30–120 s on first load), then start exploring!
+
+> **First load is slow** because DuckDB-WASM queries Overture's public S3 bucket,
+> applies a London bbox filter, and materialises the results in browser memory.
+> Subsequent queries run instantly against the in-memory tables.
 
 ---
 
 ## Running Locally
 
-Any static file server works.  Examples:
+Any static file server works. Examples:
 
 ```bash
 # Python 3
@@ -53,77 +61,103 @@ npx serve .
 
 Then open `http://localhost:8080` in your browser.
 
-> **Do not** open `index.html` directly with `File → Open` in your browser.
-> The app will fail with a cross-origin isolation error.
+> **Do not** open `index.html` directly with `File → Open`.
+> The app requires cross-origin isolation headers (SharedArrayBuffer).
 
 ---
 
-## Overture Data Source
+## London Tables
 
-The app now prefers **GitHub Release assets** in this repository and falls back to
-a tiny same-origin **DuckLake catalog** that points at Overture's public S3 files
-when the browser cannot read the release assets directly.
+After clicking **⚡ Init DuckDB**, three in-memory tables are available in the
+`london` schema:
 
-The release is tagged `overture-uk-{overture_release}` (e.g.
-`overture-uk-2026-03-18.0`) and contains UK-filtered Parquet assets plus an
-`overture_uk.ducklake` catalog:
+### `london.buildings`
 
-```
-https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
-  places_uk.parquet
-  addresses_uk.parquet
-  buildings_uk.parquet
-  divisions_uk.parquet
-  segments_uk.parquet
-  overture_uk.ducklake
-```
+| Column | Type | Description |
+|---|---|---|
+| `id` | VARCHAR | Overture feature ID |
+| `name` | VARCHAR | Primary name |
+| `height` | DOUBLE | Height in metres (may be NULL) |
+| `num_floors` | INTEGER | Number of floors (may be NULL) |
+| `geometry` | GEOMETRY | Full building polygon (WGS-84) |
+| `building_area_m2` | DOUBLE | Footprint area in m² (pre-computed) |
+| `lat` | DOUBLE | Centroid latitude |
+| `lon` | DOUBLE | Centroid longitude |
+| `xmin/ymin/xmax/ymax` | DOUBLE | Bounding box |
 
-When GitHub Releases are readable from the browser, DuckDB reads a single Parquet
-footer per theme instead of discovering headers from hundreds of S3 partition
-files. When that path is blocked by browser/CORS behavior, the fallback DuckLake
-catalog keeps the site working without hosting the full dataset on GitHub Pages.
+> **Memory note**: polygon geometry is the largest contributor to memory use.
+> If browser memory is constrained the app falls back to geometry-without-area,
+> then to centroid-only. The status bar reports which tier was used.
 
-**Why Hilbert re-sort?**  Overture's source files are already Hilbert-sorted, but
-against a global (world) extent.  Re-sorting the UK subset against the UK extent
-tightens the spatial clustering within each row group, so DuckDB-WASM can skip
-many more row groups when executing a city-sized bbox query (e.g. "all buildings
-in London"), making in-browser queries noticeably faster.  The build workflow uses
-DuckDB 1.5.1 for its improved geospatial handling and full GeoParquet support.
+### `london.places`
 
-### Rebuilding the data
+| Column | Type | Description |
+|---|---|---|
+| `id` | VARCHAR | Overture feature ID |
+| `name` | VARCHAR | Primary name |
+| `category` | VARCHAR | Overture basic category |
+| `country` | VARCHAR | Country code |
+| `confidence` | DOUBLE | Overture confidence score |
+| `lat` | DOUBLE | Latitude |
+| `lon` | DOUBLE | Longitude |
 
-Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
+### `london.addresses`
 
-1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
-2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
-3. The workflow installs DuckDB 1.5.1 + spatial/ducklake extensions, downloads the
-   source data from the Overture public S3 bucket, filters to the UK bbox,
-   re-sorts by Hilbert curve (UK extent), builds a small `overture_uk.ducklake`
-   catalog, and uploads everything to a matching release.
-4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
+| Column | Type | Description |
+|---|---|---|
+| `id` | VARCHAR | Overture feature ID |
+| `street` | VARCHAR | Street name |
+| `postcode` | VARCHAR | Postcode |
+| `city` | VARCHAR | City |
+| `country` | VARCHAR | Country code |
+| `lat` | DOUBLE | Latitude |
+| `lon` | DOUBLE | Longitude |
 
 ---
 
-## UK Bounding Box
+## Example Queries
 
-The Parquet files are pre-filtered to the UK bounding box, so no global scan is
-ever needed in the browser.  You can apply a tighter filter to zoom in on a city:
-
-```
-west  = -8.75   east  =  1.90
-south = 49.80   north = 60.95
-```
-
-**For point data (places, addresses):**
 ```sql
-WHERE lon BETWEEN -0.20 AND -0.05
-  AND lat BETWEEN 51.46 AND 51.56   -- central London
-```
+-- All London tables
+SHOW ALL TABLES;
 
-**For object bboxes (buildings, divisions, segments):**
-```sql
-WHERE xmax >= west  AND xmin <= east
-  AND ymax >= south AND ymin <= north
+-- Sample buildings
+SELECT * FROM london.buildings WHERE name IS NOT NULL LIMIT 10;
+
+-- Tallest buildings
+SELECT name, height, num_floors, lat, lon
+FROM london.buildings
+WHERE height IS NOT NULL
+ORDER BY height DESC
+LIMIT 20;
+
+-- Buildings larger than 1 000 m²
+SELECT name, building_area_m2, height, lat, lon
+FROM london.buildings
+WHERE building_area_m2 > 1000
+ORDER BY building_area_m2 DESC
+LIMIT 20;
+
+-- Distance from Trafalgar Square
+SELECT name, category,
+  ROUND(ST_Distance(ST_Point(lon, lat), ST_Point(-0.1281, 51.5080)) * 111000, 1) AS dist_m
+FROM london.places
+WHERE name IS NOT NULL
+ORDER BY dist_m
+LIMIT 10;
+
+-- Buildings intersecting a search box (Tate Modern area)
+SELECT name, height, building_area_m2
+FROM london.buildings
+WHERE geometry IS NOT NULL
+  AND ST_Intersects(geometry, ST_MakeEnvelope(-0.105, 51.504, -0.093, 51.512))
+LIMIT 20;
+
+-- Addresses in EC1 postcode
+SELECT street, postcode, lat, lon
+FROM london.addresses
+WHERE postcode ILIKE 'EC1%'
+LIMIT 20;
 ```
 
 ---
@@ -134,12 +168,59 @@ WHERE xmax >= west  AND xmin <= east
 index.html          ← entire app (single static file)
   ├─ MapLibre GL    ← map rendering (CDN)
   └─ DuckDB-WASM    ← in-browser SQL engine (CDN / jsDelivr)
-       ├─ httpfs    ← reads Parquet files and the hosted DuckLake catalog
-       └─ ducklake  ← fallback catalog pointing at Overture S3 Parquet files
+       ├─ httpfs    ← queries Overture S3 Parquet files at startup
+       └─ spatial   ← ST_* spatial functions (LOAD spatial)
 
 .github/workflows/
-  build-uk-parquets.yml  ← builds Parquet release assets + DuckLake catalog
-  deploy.yml             ← deploys index.html and overture_uk.ducklake to GitHub Pages
+  deploy.yml             ← deploys index.html to GitHub Pages
+  build-overture-ducklake.yml  ← legacy: builds UK Parquet + DuckLake assets
 ```
 
+**Startup flow:**
+
+1. DuckDB-WASM initialises (bundle from jsDelivr CDN).
+2. `LOAD httpfs` + `LOAD spatial` extensions are loaded.
+3. An anonymous S3 secret is created for Overture's public bucket.
+4. For each theme (places, addresses, buildings), DuckDB queries
+   `s3://overturemaps-us-west-2/release/{RELEASE}/theme=.../type=.../*.parquet`
+   with a Greater London bbox predicate and materialises the result as an
+   in-memory table in the `london` schema.
+5. Users query the materialised tables directly — all subsequent queries are
+   fast (in-memory).
+
 No build step. No server. No API keys needed.
+
+---
+
+## London Bounding Box
+
+The materialization filter uses the Greater London bbox:
+
+```
+west  = -0.51   east  =  0.33
+south = 51.28   north = 51.72
+```
+
+---
+
+## Memory Budget
+
+DuckDB-WASM has a ~4 GB address-space ceiling. The app caps DuckDB at 3.3 GB
+and targets well under 1.5 GB effective in-session footprint to leave room
+for query intermediates and spatial operations.
+
+| Table | Estimated size |
+|---|---|
+| `london.places` | ~10–50 MB |
+| `london.addresses` | ~20–80 MB |
+| `london.buildings` (with polygons) | ~200–800 MB |
+| Spatial/query overhead | ~200–500 MB |
+
+`london.buildings` is the dominant cost. The app tries three materialisation
+tiers automatically:
+
+1. **Full**: geometry + `building_area_m2` pre-computed (preferred).
+2. **Geometry-only**: polygon stored, area computation skipped.
+3. **Centroid-only**: no polygon geometry (lightweight fallback).
+
+The status bar after init reports which tier was used.
