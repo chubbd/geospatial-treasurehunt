@@ -937,7 +937,7 @@ LIMIT 20;`
         console.warn("spatial extension not available; ST_* functions will not work");
       }
 
-      await conn.query(`SET enable_geoparquet = false;`);
+      //await conn.query(`SET enable_geoparquet = false;`);
 
       
       const rawViewSource = await createRawViewsFromDuckLake();
