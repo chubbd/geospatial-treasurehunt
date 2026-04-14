@@ -388,7 +388,7 @@
   const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
   // Greater London bounding box — all materialised tables are scoped to this area.
-  // Covers the 32 boroughs + City of London (≈ 1 572 km²). A generous margin is
+  // Covers the 32 boroughs + City of London (≈ 1,572 km²). A generous margin is
   // used so that edge-of-borough features are not clipped.
   const LONDON = { west: -0.51, south: 51.28, east: 0.33, north: 51.70 };
 
@@ -1184,7 +1184,7 @@ LIMIT 20;`
   async function initializeDuckDB() {
     // London-only materialisation takes 30–90 s on first load (one-time S3 fetch).
     // All subsequent in-session queries run against in-memory tables (sub-ms).
-    setStatus("Initializing DuckDB-WASM… (first load: 30–90 s to materialise London tables)");
+    setStatus("Initializing DuckDB-WASM… (first load: 30-90 s to materialise London tables)");
     try {
       const bundles = duckdb.getJsDelivrBundles();
       const bundle  = await duckdb.selectBundle(bundles);

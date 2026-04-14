@@ -33,7 +33,7 @@ no backend required.
 1. Fork or clone this repository.
 2. Go to **Settings → Pages** and set the source branch to `main` (root `/`).
 3. GitHub will build and publish the site — usually within 60 seconds.
-4. Open the published URL, click **⚡ Init DuckDB**, wait **30–90 s** for the
+4. Open the published URL, click **⚡ Init DuckDB**, wait **30-90 s** for the
    one-time London data materialisation, then start exploring!
 
 ---
