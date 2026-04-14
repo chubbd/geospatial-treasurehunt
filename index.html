@@ -813,20 +813,21 @@ LIMIT 30;`
   // Materialise London-scoped in-memory tables from Overture S3 Parquet files.
   // ---------------------------------------------------------------------------
   async function materializeLondonPlaces(base) {
+    // Intersects test: include any feature whose bbox overlaps Greater London.
     const filter = `bbox IS NOT NULL
-        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
-        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
+        AND bbox.xmin <= ${LON_E} AND bbox.xmax >= ${LON_W}
+        AND bbox.ymin <= ${LON_N} AND bbox.ymax >= ${LON_S}`;
     // Try 2026+ schema (basic_category) then fall back to legacy categories.primary.
     try {
       await conn.query(`
         CREATE OR REPLACE TABLE london_places AS
         SELECT
           id,
-          CAST(names.primary AS VARCHAR)  AS name,
-          CAST(basic_category AS VARCHAR) AS category,
-          CAST(country AS VARCHAR)        AS country,
-          bbox.ymin AS lat,
-          bbox.xmin AS lon
+          CAST(names.primary AS VARCHAR)         AS name,
+          CAST(basic_category AS VARCHAR)        AS category,
+          CAST(country AS VARCHAR)               AS country,
+          (bbox.ymin + bbox.ymax) / 2.0          AS lat,
+          (bbox.xmin + bbox.xmax) / 2.0          AS lon
         FROM read_parquet('${base}/theme=places/type=place/*.parquet')
         WHERE ${filter};
       `);
@@ -835,11 +836,11 @@ LIMIT 30;`
         CREATE OR REPLACE TABLE london_places AS
         SELECT
           id,
-          CAST(names.primary AS VARCHAR)       AS name,
-          CAST(categories.primary AS VARCHAR)  AS category,
-          CAST(country AS VARCHAR)             AS country,
-          bbox.ymin AS lat,
-          bbox.xmin AS lon
+          CAST(names.primary AS VARCHAR)         AS name,
+          CAST(categories.primary AS VARCHAR)    AS category,
+          CAST(country AS VARCHAR)               AS country,
+          (bbox.ymin + bbox.ymax) / 2.0          AS lat,
+          (bbox.xmin + bbox.xmax) / 2.0          AS lon
         FROM read_parquet('${base}/theme=places/type=place/*.parquet')
         WHERE ${filter};
       `);
@@ -847,20 +848,21 @@ LIMIT 30;`
   }
 
   async function materializeLondonAddresses(base) {
+    // Intersects test: include any feature whose bbox overlaps Greater London.
     const filter = `bbox IS NOT NULL
-        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
-        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
+        AND bbox.xmin <= ${LON_E} AND bbox.xmax >= ${LON_W}
+        AND bbox.ymin <= ${LON_N} AND bbox.ymax >= ${LON_S}`;
     // Try postalcode (2026 schema) then address_levels fallback.
     try {
       await conn.query(`
         CREATE OR REPLACE TABLE london_addresses AS
         SELECT
           id,
-          CAST(street AS VARCHAR)     AS street,
-          CAST(postalcode AS VARCHAR) AS postcode,
-          CAST(country AS VARCHAR)    AS country,
-          bbox.ymin AS lat,
-          bbox.xmin AS lon
+          CAST(street AS VARCHAR)                AS street,
+          CAST(postalcode AS VARCHAR)            AS postcode,
+          CAST(country AS VARCHAR)               AS country,
+          (bbox.ymin + bbox.ymax) / 2.0          AS lat,
+          (bbox.xmin + bbox.xmax) / 2.0          AS lon
         FROM read_parquet('${base}/theme=addresses/type=address/*.parquet')
         WHERE ${filter};
       `);
@@ -870,10 +872,10 @@ LIMIT 30;`
         SELECT
           id,
           CAST(address_levels[1].value AS VARCHAR) AS street,
-          CAST(postalcode AS VARCHAR)              AS postcode,
-          CAST(country AS VARCHAR)                 AS country,
-          bbox.ymin AS lat,
-          bbox.xmin AS lon
+          CAST(postalcode AS VARCHAR)               AS postcode,
+          CAST(country AS VARCHAR)                  AS country,
+          (bbox.ymin + bbox.ymax) / 2.0             AS lat,
+          (bbox.xmin + bbox.xmax) / 2.0             AS lon
         FROM read_parquet('${base}/theme=addresses/type=address/*.parquet')
         WHERE ${filter};
       `);
@@ -881,9 +883,10 @@ LIMIT 30;`
   }
 
   async function materializeLondonBuildings(base) {
+    // Intersects test: include any feature whose bbox overlaps Greater London.
     const filter = `bbox IS NOT NULL
-        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
-        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
+        AND bbox.xmin <= ${LON_E} AND bbox.xmax >= ${LON_W}
+        AND bbox.ymin <= ${LON_N} AND bbox.ymax >= ${LON_S}`;
     await conn.query(`
       CREATE OR REPLACE TABLE london_buildings AS
       SELECT
