@@ -909,7 +909,7 @@ LIMIT 20;`
       // ── Performance tuning ────────────────────────────────────────────────
       // Cache remote Parquet footers in memory — avoids re-fetching metadata
       // on every query when reading from httpfs.
-      await conn.query(`SET enable_object_cache=true;`);
+      //await conn.query(`SET enable_object_cache=true;`);
       // Permit the planner to reorder output rows, unlocking faster parallel
       // aggregation and hash-join paths.
       await conn.query(`SET preserve_insertion_order=false;`);
