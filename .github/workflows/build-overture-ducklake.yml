@@ -1,32 +1,18 @@
-name: Overture Ducklake
+name: "[ARCHIVED] Overture Ducklake
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ARCHIVED — This workflow built the DuckLake catalog used by the old
+# browser-DuckLake approach.  The active app no longer uses DuckLake; it reads
+# directly from Overture S3 and materialises London-scoped tables in-memory.
+#
+# Kept for reference on the archive/ducklake-browser-approach branch.
+# Do not run this on main — it is a no-op stub.
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Original description:
 # Builds UK-bbox-filtered, Hilbert-re-sorted Parquet files from the Overture
 # Maps public S3 bucket, plus a small DuckLake catalog that points at Overture's
 # public S3 Parquet files, and uploads them as GitHub Release assets.
-#
-# Why a single pre-filtered file per theme?
-#   DuckDB-WASM reads one Parquet footer instead of 200+ S3 partition footers,
-#   cutting browser query initialisation from ~20–30 s to ~2–5 s.
-#
-# Why Hilbert re-sort?
-#   Overture source files are Hilbert-sorted against a global (world) extent.
-#   After filtering to the UK, we re-sort against the UK extent using
-#   ST_Hilbert(geometry, ST_Extent(ST_MakeEnvelope(UK_WEST,UK_SOUTH,...)))
-#   so that row groups cluster tightly within UK sub-regions. This lets
-#   DuckDB-WASM skip far more row groups when users query a city-sized bbox
-#   (e.g. "all museums in London"), yielding faster in-browser queries.
-#   Using the hardcoded UK bbox as the Hilbert bounds avoids a double-scan.
-#
-# DuckDB 1.5.1 is used for its improved geospatial handling (ST_Hilbert, full
-# GeoParquet read/write, updated spatial extension).
-#
-# Usage:
-#   Trigger manually via "Run workflow" in the Actions UI, optionally overriding
-#   the Overture release tag. The workflow creates (or updates) a GitHub Release
-#   tagged  overture-uk-{overture_release}  with Parquet assets plus
-#   overture_uk.ducklake.
-#
-# The release tag used here MUST match OVERTURE_RELEASE in index.html.
 
 on:
   workflow_dispatch:

@@ -306,11 +306,13 @@
       Opening via <code class="inline">file://</code> will fail (SharedArrayBuffer / COOP headers required).
     </div>
     <div class="muted">
-      Query UK-pre-filtered <strong>Overture Maps</strong> Parquet files served from
-      <strong>GitHub Releases</strong> when possible, with a same-origin
-      <strong>DuckLake</strong> catalog fallback that points at Overture's public S3
-      files. Everything runs in <strong>DuckDB-WASM</strong> in the browser — no
-      backend needed.
+      Query <strong>London Overture Maps</strong> data entirely in the browser.
+      On first load DuckDB-WASM reads from the Overture public S3 bucket and
+      materialises <code class="inline">london_places</code>,
+      <code class="inline">london_addresses</code>, and
+      <code class="inline">london_buildings</code> as in-memory tables — then
+      all SQL (including <code class="inline">ST_*</code> spatial functions)
+      runs instantly with no backend needed.
     </div>
   </div>
 
@@ -329,15 +331,14 @@
     <button data-theme="places">Places</button>
     <button data-theme="addresses">Addresses</button>
     <button data-theme="buildings">Buildings</button>
-    <button data-theme="divisions">Divisions</button>
-    <button data-theme="transportation">Transport</button>
+    <button data-theme="spatial">Spatial</button>
     <button data-theme="schema">Schema</button>
   </div>
 
   <div id="clues"></div>
 
   <div class="footer-note">
-    Tip: run <em>Initialize DuckDB</em> first, then select a clue and click <em>Insert Demo SQL</em>. Data is pre-filtered to the UK.
+    Tip: click <em>⚡ Init DuckDB</em> first (materialises London data, ~20–60 s), then select a clue and click <em>📋 Insert Demo SQL</em>.
   </div>
 </aside>
 
@@ -351,7 +352,7 @@
       <button id="hintBtn">💡 Hint</button>
       <button id="sampleBtn">📋 Insert Demo SQL</button>
       <button id="clearMapBtn">🗑 Clear Map</button>
-      <button id="bboxSnippetBtn">📐 UK BBox Template</button>
+      <button id="bboxSnippetBtn">📐 London BBox Template</button>
     </div>
     <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
     <div class="tab-bar">
@@ -359,8 +360,10 @@
       <button class="tab-btn" id="tabResults" data-tab="results">📊 Results</button>
     </div>
     <section id="editorPane" class="tab-active">
-      <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first, then select a clue and click "📋 Insert Demo SQL".
--- Data is pre-filtered to the UK — no global bbox filter needed.
+      <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first (materialises London data, ~20–60 s).
+-- Then select a clue and click "📋 Insert Demo SQL".
+-- Tables available: london_places, london_addresses, london_buildings
+-- ST_* spatial functions are enabled (LOAD spatial runs at init).
 </textarea>
     </section>
 
@@ -377,25 +380,17 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
 <script type="module">
-  //import * as duckdb from "https://unpkg.com/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-wasm-eh.js"
   import * as duckdb from "./duckdb/duckdb-browser.mjs";
 
   // ---------------------------------------------------------------------------
   // Constants
   // ---------------------------------------------------------------------------
-  const UK = { west: -8.75, south: 49.80, east: 1.90, north: 60.95 };
 
-  // Data is loaded from the DuckLake catalog (overture_uk.ducklake),
-  // which points at Overture's public S3 Parquet data.
-  const DUCKLAKE_CATALOG = "overture_uk.ducklake";
-
-  // Overture release tag — must match OVERTURE_RELEASE in deploy.yml.
+  // Overture release tag used to build the S3 path for the source Parquet files.
   const OVERTURE_RELEASE = "2026-03-18.0";
-  // Fallback URL: fetch the catalog directly from the GitHub Release asset
-  // when the same-origin copy hasn't landed yet (e.g. mid-deployment 404).
-  const RELEASE_CATALOG_URL =
-    `https://github.com/chubbd/geospatial-treasurehunt/releases/download/` +
-    `overture-uk-${OVERTURE_RELEASE}/${DUCKLAKE_CATALOG}`;
+
+  // Greater London bounding box used to filter Overture data at materialisation.
+  const LON_W = -0.55, LON_E = 0.35, LON_S = 51.25, LON_N = 51.75;
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -405,85 +400,53 @@
     {
       id: "schema-places",
       theme: "schema",
-      title: "Inspect: places schema",
-      text: "Peek at the raw Overture places schema before querying.",
-      hint: "DESCRIBE gives you column names and types without fetching data rows.",
-      starterSql: `-- Inspect the raw places schema (fast — no data fetched)
-DESCRIBE places_raw;`
+      title: "Inspect: london_places schema",
+      text: "Peek at the materialised London places table schema.",
+      hint: "DESCRIBE gives column names and types from the in-memory table.",
+      starterSql: `-- Inspect the in-memory London places schema
+DESCRIBE london_places;`
     },
     {
       id: "schema-addresses",
       theme: "schema",
-      title: "Inspect: addresses schema",
-      text: "Peek at the raw Overture addresses schema.",
-      hint: "Check for street, postcode, country columns.",
-      starterSql: `-- Inspect the raw addresses schema
-DESCRIBE addresses_raw;`
+      title: "Inspect: london_addresses schema",
+      text: "Peek at the materialised London addresses schema.",
+      hint: "Look for street, postcode, lat, lon columns.",
+      starterSql: `-- Inspect the in-memory London addresses schema
+DESCRIBE london_addresses;`
     },
     {
       id: "schema-buildings",
       theme: "schema",
-      title: "Inspect: buildings schema",
-      text: "Peek at the raw Overture buildings schema.",
-      hint: "Look for height, num_floors, names, and bbox columns.",
-      starterSql: `-- Inspect the raw buildings schema
-DESCRIBE buildings_raw;`
-    },
-    {
-      id: "schema-divisions",
-      theme: "schema",
-      title: "Inspect: divisions schema",
-      text: "Peek at the Overture divisions schema (countries, regions, cities…).",
-      hint: "Look for subtype, country, names columns.",
-      starterSql: `-- Inspect the raw divisions schema
-DESCRIBE divisions_raw;`
-    },
-    {
-      id: "schema-transport",
-      theme: "schema",
-      title: "Inspect: transportation segments schema",
-      text: "Peek at the Overture transportation segments schema.",
-      hint: "Look for road, class, and geometry columns.",
-      starterSql: `-- Inspect the raw transportation segments schema
-DESCRIBE segments_raw;`
+      title: "Inspect: london_buildings schema",
+      text: "Peek at the materialised London buildings schema.",
+      hint: "Look for height, num_floors, bbox coords, lat, lon columns.",
+      starterSql: `-- Inspect the in-memory London buildings schema
+DESCRIBE london_buildings;`
     },
 
     // ── Places ─────────────────────────────────────────────────────────────
     {
-      id: "places-warmup",
+      id: "places-sample",
       theme: "places",
-      title: "Places: named UK sample",
-      text: "Find 25 named places in the UK. A warm-up to get data on the map.",
-      hint: "Use the places_uk view — it pre-applies the UK bbox filter.",
-      starterSql: `-- 25 named UK places (uses bbox-filtered view for speed)
+      title: "Places: London sample",
+      text: "Find 30 named places in London. A warm-up query.",
+      hint: "All rows are already scoped to Greater London — no extra filter needed.",
+      starterSql: `-- 30 named places in London
 SELECT id, name, category, lat, lon
-FROM places_uk
+FROM london_places
 WHERE name IS NOT NULL
-LIMIT 25;`
+LIMIT 30;`
     },
     {
-      id: "places-category",
+      id: "places-museums",
       theme: "places",
-      title: "Places: filter by category",
-      text: "Find UK restaurants or cafes.",
-      hint: "Use ILIKE for case-insensitive category matching.",
-      starterSql: `-- UK restaurants & cafes
-SELECT name, category, lat, lon
-FROM places_uk
-WHERE category ILIKE '%restaurant%'
-   OR category ILIKE '%cafe%'
-   OR category ILIKE '%coffee%'
-LIMIT 50;`
-    },
-    {
-      id: "places-treasure",
-      theme: "places",
-      title: "Places: London treasure hunt",
+      title: "Places: museums near central London",
       text: "I am at a famous London landmark. Find museums near the centre of London.",
-      hint: "London centre is roughly lat=51.507, lon=-0.127. Filter within ~0.05 degrees.",
+      hint: "London centre is roughly lat=51.507, lon=-0.127. Filter within ~0.05°.",
       starterSql: `-- Museums near central London
 SELECT name, category, lat, lon
-FROM places_uk
+FROM london_places
 WHERE category ILIKE '%museum%'
   AND lat BETWEEN 51.46 AND 51.56
   AND lon BETWEEN -0.20 AND -0.05
@@ -491,14 +454,28 @@ ORDER BY name
 LIMIT 30;`
     },
     {
+      id: "places-category",
+      theme: "places",
+      title: "Places: restaurants and cafes",
+      text: "Find London restaurants and cafes.",
+      hint: "Use ILIKE for case-insensitive category matching with OR conditions.",
+      starterSql: `-- London restaurants & cafes
+SELECT name, category, lat, lon
+FROM london_places
+WHERE category ILIKE '%restaurant%'
+   OR category ILIKE '%cafe%'
+   OR category ILIKE '%coffee%'
+LIMIT 50;`
+    },
+    {
       id: "places-count",
       theme: "places",
-      title: "Places: count by category (UK)",
-      text: "Which categories have the most places in the UK?",
-      hint: "GROUP BY category and ORDER BY count descending.",
-      starterSql: `-- Top place categories in the UK
+      title: "Places: top categories in London",
+      text: "Which categories have the most places in London?",
+      hint: "GROUP BY category, ORDER BY count DESC.",
+      starterSql: `-- Top place categories in London
 SELECT category, COUNT(*) AS cnt
-FROM places_uk
+FROM london_places
 WHERE category IS NOT NULL
 GROUP BY category
 ORDER BY cnt DESC
@@ -507,194 +484,182 @@ LIMIT 30;`
 
     // ── Addresses ──────────────────────────────────────────────────────────
     {
-      id: "addresses-warmup",
+      id: "addresses-sample",
       theme: "addresses",
-      title: "Addresses: UK sample",
-      text: "Sample 25 UK addresses. Explore the address schema.",
-      hint: "Use addresses_uk — bbox pre-filtered. Look for street, postcode fields.",
-      starterSql: `-- 25 UK addresses from the bbox-filtered view
-SELECT *
-FROM addresses_uk
-LIMIT 25;`
+      title: "Addresses: London sample",
+      text: "Sample 30 London addresses to explore the schema.",
+      hint: "The table is pre-filtered to Greater London.",
+      starterSql: `-- 30 London addresses
+SELECT id, street, postcode, lat, lon
+FROM london_addresses
+LIMIT 30;`
     },
     {
       id: "addresses-postcode",
       theme: "addresses",
       title: "Addresses: search by postcode",
-      text: "Find addresses in a specific UK postcode area (e.g. EC1).",
+      text: "Find addresses in the London EC1 postcode area.",
       hint: "Filter postcode with ILIKE 'EC1%'.",
       starterSql: `-- Addresses in the EC1 London postcode district
 SELECT street, postcode, lat, lon
-FROM addresses_uk
+FROM london_addresses
 WHERE postcode ILIKE 'EC1%'
 LIMIT 40;`
     },
     {
-      id: "addresses-city",
+      id: "addresses-count-postcode",
       theme: "addresses",
       title: "Addresses: count by postcode area",
-      text: "Which postcode areas have the most Overture addresses in the UK?",
+      text: "Which London postcode areas have the most addresses?",
       hint: "Use LEFT(postcode, 2) to extract the postcode district prefix.",
-      starterSql: `-- UK postcode areas by address count
-SELECT LEFT(postcode, 2) AS postcode_area, COUNT(*) AS cnt
-FROM addresses_uk
+      starterSql: `-- London postcode areas by address count
+SELECT LEFT(postcode, 2) AS area, COUNT(*) AS cnt
+FROM london_addresses
 WHERE postcode IS NOT NULL
-GROUP BY postcode_area
+GROUP BY area
 ORDER BY cnt DESC
-LIMIT 25;`
-    },
-    {
-      id: "addresses-raw-schema",
-      theme: "addresses",
-      title: "Addresses: raw schema fallback",
-      text: "If addresses_uk columns differ, inspect the raw schema to adapt.",
-      hint: "DESCRIBE shows real column names. Overture schemas can change between releases.",
-      starterSql: `-- Check actual addresses schema, then adapt the query
-DESCRIBE addresses_raw;
-
--- After inspecting, try:
--- SELECT * FROM addresses_raw LIMIT 20;`
+LIMIT 20;`
     },
 
     // ── Buildings ──────────────────────────────────────────────────────────
     {
-      id: "buildings-warmup",
+      id: "buildings-sample",
       theme: "buildings",
-      title: "Buildings: UK sample",
-      text: "Sample 25 UK buildings with name and size info.",
-      hint: "Use buildings_uk — bbox pre-filtered. Coordinates are centroid lat/lon.",
-      starterSql: `-- 25 named UK buildings
+      title: "Buildings: London sample",
+      text: "Sample 25 named buildings in London with height info.",
+      hint: "Coordinates are centroid lat/lon derived from the bbox.",
+      starterSql: `-- 25 named London buildings
 SELECT id, name, height, num_floors, lat, lon
-FROM buildings_uk
+FROM london_buildings
 WHERE name IS NOT NULL
 LIMIT 25;`
     },
     {
       id: "buildings-tallest",
       theme: "buildings",
-      title: "Buildings: tallest in the UK",
-      text: "Find the tallest buildings in the UK subset.",
-      hint: "ORDER BY height DESC. Filter height IS NOT NULL.",
-      starterSql: `-- Tallest UK buildings
+      title: "Buildings: tallest in London",
+      text: "Find the tallest buildings in London.",
+      hint: "ORDER BY height DESC and filter height IS NOT NULL.",
+      starterSql: `-- Tallest London buildings
 SELECT name, height, num_floors, lat, lon
-FROM buildings_uk
+FROM london_buildings
 WHERE height IS NOT NULL
 ORDER BY height DESC
 LIMIT 20;`
     },
     {
-      id: "buildings-london",
+      id: "buildings-city",
       theme: "buildings",
-      title: "Buildings: tall buildings in London",
-      text: "Find the tallest buildings in London specifically.",
-      hint: "Combine height ordering with a tighter London bbox (lat ~51.4–51.6, lon ~-0.25–0.05).",
-      starterSql: `-- Tallest buildings within central London
+      title: "Buildings: tall buildings in the City",
+      text: "Find the tallest buildings in the Square Mile (City of London).",
+      hint: "The City bbox is roughly lon -0.10 to 0.00, lat 51.50 to 51.52.",
+      starterSql: `-- Tallest buildings in the City of London
 SELECT name, height, num_floors, lat, lon
-FROM buildings_uk
+FROM london_buildings
 WHERE height IS NOT NULL
-  AND lat BETWEEN 51.40 AND 51.60
-  AND lon BETWEEN -0.25 AND 0.05
+  AND lat BETWEEN 51.50 AND 51.52
+  AND lon BETWEEN -0.10 AND 0.00
 ORDER BY height DESC
 LIMIT 20;`
     },
     {
-      id: "buildings-many-floors",
+      id: "buildings-floors",
       theme: "buildings",
-      title: "Buildings: most floors in the UK",
-      text: "Which UK buildings have the most recorded floors?",
+      title: "Buildings: most floors in London",
+      text: "Which London buildings have the most recorded floors?",
       hint: "ORDER BY num_floors DESC.",
-      starterSql: `-- UK buildings with the most floors
+      starterSql: `-- London buildings with the most floors
 SELECT name, num_floors, height, lat, lon
-FROM buildings_uk
+FROM london_buildings
 WHERE num_floors IS NOT NULL
 ORDER BY num_floors DESC
 LIMIT 20;`
     },
 
-    // ── Divisions ──────────────────────────────────────────────────────────
+    // ── Spatial (ST_*) ─────────────────────────────────────────────────────
     {
-      id: "divisions-warmup",
-      theme: "divisions",
-      title: "Divisions: UK regions & cities",
-      text: "List UK administrative divisions (regions, cities, counties).",
-      hint: "Use divisions_uk. The subtype column indicates the admin level.",
-      starterSql: `-- UK divisions sample (regions, cities, counties)
-SELECT id, name, subtype, country, lat, lon
-FROM divisions_uk
+      id: "spatial-nearest",
+      theme: "spatial",
+      title: "Spatial: nearest places to Tower Bridge",
+      text: "Find the 20 nearest named places to Tower Bridge using ST_Distance.",
+      hint: "ST_Distance between two ST_Point geometries returns degrees. Multiply by ~111 000 for metres.",
+      starterSql: `-- 20 nearest places to Tower Bridge (lon -0.0754, lat 51.5055)
+SELECT name, category, lat, lon,
+  round(
+    ST_Distance(ST_Point(lon, lat), ST_Point(-0.0754, 51.5055)) * 111000
+  ) AS dist_m
+FROM london_places
 WHERE name IS NOT NULL
-LIMIT 40;`
+ORDER BY dist_m
+LIMIT 20;`
     },
     {
-      id: "divisions-cities",
-      theme: "divisions",
-      title: "Divisions: cities only",
-      text: "List places classified as cities within the UK.",
-      hint: "Filter subtype = 'city' or ILIKE '%city%'. Subtypes vary by release.",
-      starterSql: `-- UK city-level divisions
-SELECT name, subtype, country, lat, lon
-FROM divisions_uk
-WHERE subtype ILIKE '%city%'
-   OR subtype ILIKE '%town%'
-ORDER BY name
-LIMIT 40;`
-    },
-    {
-      id: "divisions-raw",
-      theme: "divisions",
-      title: "Divisions: raw bbox filter",
-      text: "Query divisions directly from raw data using bbox struct fields.",
-      hint: "The raw view uses bbox struct fields: xmin, xmax, ymin, ymax. Data is already UK-filtered.",
-      starterSql: `-- Divisions using raw bbox struct fields (data is pre-filtered to UK)
-SELECT id,
-       CAST(names.primary AS VARCHAR) AS name,
-       subtype,
-       country,
-       (bbox.ymin + bbox.ymax) / 2.0 AS lat,
-       (bbox.xmin + bbox.xmax) / 2.0 AS lon
-FROM divisions_raw
-WHERE country = 'GB'
-  AND names.primary IS NOT NULL
-LIMIT 40;`
-    },
-
-    // ── Transportation ─────────────────────────────────────────────────────
-    {
-      id: "transport-warmup",
-      theme: "transportation",
-      title: "Transport: UK road segments",
-      text: "Sample UK road segments. This table is large — always bbox-filter first.",
-      hint: "Use segments_uk. The class column indicates motorway, residential, etc.",
-      starterSql: `-- UK road segment sample (bbox pre-filtered)
-SELECT id, road_class, road_surface, lat, lon
-FROM segments_uk
-WHERE road_class IS NOT NULL
+      id: "spatial-within-radius",
+      theme: "spatial",
+      title: "Spatial: places within 500 m of St Paul's",
+      text: "Find places within 500 m of St Paul's Cathedral using a distance filter.",
+      hint: "St Paul's: lat=51.5138, lon=-0.0984. 500 m ≈ 0.0045° at London latitude.",
+      starterSql: `-- Places within ~500 m of St Paul's Cathedral
+SELECT name, category, lat, lon,
+  round(
+    ST_Distance(ST_Point(lon, lat), ST_Point(-0.0984, 51.5138)) * 111000
+  ) AS dist_m
+FROM london_places
+WHERE name IS NOT NULL
+  AND ST_Distance(ST_Point(lon, lat), ST_Point(-0.0984, 51.5138)) < 0.0045
+ORDER BY dist_m
 LIMIT 30;`
     },
     {
-      id: "transport-motorways",
-      theme: "transportation",
-      title: "Transport: UK motorways",
-      text: "Find motorway segments in the UK.",
-      hint: "Filter road_class = 'motorway'. Segments_uk is already UK-bounded.",
-      starterSql: `-- UK motorway segments
-SELECT id, road_class, road_surface, lat, lon
-FROM segments_uk
-WHERE road_class = 'motorway'
-LIMIT 40;`
+      id: "spatial-density-grid",
+      theme: "spatial",
+      title: "Spatial: place density grid",
+      text: "Count places in a 0.05° × 0.05° grid across London.",
+      hint: "ROUND(lon / 0.05) * 0.05 bins coordinates into a regular grid.",
+      starterSql: `-- Place density in a 0.05° × 0.05° grid over London
+SELECT
+  round(lon / 0.05) * 0.05 AS grid_lon,
+  round(lat / 0.05) * 0.05 AS grid_lat,
+  COUNT(*) AS cnt
+FROM london_places
+WHERE name IS NOT NULL
+GROUP BY grid_lon, grid_lat
+ORDER BY cnt DESC
+LIMIT 30;`
     },
     {
-      id: "transport-count",
-      theme: "transportation",
-      title: "Transport: road class counts (UK)",
-      text: "How many road segments of each class are in the UK?",
-      hint: "GROUP BY road_class — motorway vs primary vs residential etc.",
-      starterSql: `-- UK road segments counted by class
-SELECT road_class, COUNT(*) AS cnt
-FROM segments_uk
-WHERE road_class IS NOT NULL
-GROUP BY road_class
-ORDER BY cnt DESC
+      id: "spatial-buildings-footprint",
+      theme: "spatial",
+      title: "Spatial: building footprint proxy",
+      text: "Estimate the bbox area of buildings in the City of London.",
+      hint: "Use (xmax-xmin)*(ymax-ymin)*111000*111000 as a proxy for footprint area in m².",
+      starterSql: `-- Building bbox-area proxy (m²) in the City of London
+SELECT name, height, num_floors,
+  round((xmax - xmin) * (ymax - ymin) * 111000 * 111000) AS approx_footprint_m2,
+  lat, lon
+FROM london_buildings
+WHERE height IS NOT NULL
+  AND lat BETWEEN 51.50 AND 51.52
+  AND lon BETWEEN -0.10 AND 0.00
+ORDER BY approx_footprint_m2 DESC
 LIMIT 20;`
+    },
+    {
+      id: "spatial-join-address-place",
+      theme: "spatial",
+      title: "Spatial: addresses near a museum",
+      text: "Find addresses within 200 m of any museum in London using ST_Distance.",
+      hint: "Use a cross join or subquery to find addresses close to museum coordinates.",
+      starterSql: `-- Addresses within ~200 m of the Natural History Museum
+-- Natural History Museum: lon -0.1763, lat 51.4966
+SELECT a.street, a.postcode, a.lat, a.lon,
+  round(
+    ST_Distance(ST_Point(a.lon, a.lat), ST_Point(-0.1763, 51.4966)) * 111000
+  ) AS dist_m
+FROM london_addresses AS a
+WHERE ST_Distance(ST_Point(a.lon, a.lat), ST_Point(-0.1763, 51.4966)) < 0.0018
+ORDER BY dist_m
+LIMIT 30;`
     },
   ];
 
@@ -724,8 +689,8 @@ LIMIT 20;`
   const map = new maplibregl.Map({
     container: "map",
     style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-    center: [-2.5, 54.5],
-    zoom: 4.8
+    center: [-0.118, 51.509],
+    zoom: 9.5
   });
   map.addControl(new maplibregl.NavigationControl(), "top-right");
 
@@ -844,49 +809,96 @@ LIMIT 20;`
     }
   }
 
-  async function createRawViewsFromDuckLake() {
-    // Fetch the .ducklake catalog file and register it in the WASM virtual
-    // filesystem so the ducklake extension can open it by name.
-    // Try the same-origin copy first (deployed alongside index.html by deploy.yml);
-    // fall back to the GitHub Release asset if that returns a 404 (e.g. mid-deploy).
-    setStatus("Fetching DuckLake catalog…");
-    let resp = await fetch(DUCKLAKE_CATALOG);
-    if (!resp.ok) {
-      setStatus("Fetching DuckLake catalog from release asset…");
-      resp = await fetch(RELEASE_CATALOG_URL);
+  // ---------------------------------------------------------------------------
+  // Materialise London-scoped in-memory tables from Overture S3 Parquet files.
+  // ---------------------------------------------------------------------------
+  async function materializeLondonPlaces(base) {
+    const filter = `bbox IS NOT NULL
+        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
+        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
+    // Try 2026+ schema (basic_category) then fall back to legacy categories.primary.
+    try {
+      await conn.query(`
+        CREATE OR REPLACE TABLE london_places AS
+        SELECT
+          id,
+          CAST(names.primary AS VARCHAR)  AS name,
+          CAST(basic_category AS VARCHAR) AS category,
+          CAST(country AS VARCHAR)        AS country,
+          bbox.ymin AS lat,
+          bbox.xmin AS lon
+        FROM read_parquet('${base}/theme=places/type=place/*.parquet')
+        WHERE ${filter};
+      `);
+    } catch (_) {
+      await conn.query(`
+        CREATE OR REPLACE TABLE london_places AS
+        SELECT
+          id,
+          CAST(names.primary AS VARCHAR)       AS name,
+          CAST(categories.primary AS VARCHAR)  AS category,
+          CAST(country AS VARCHAR)             AS country,
+          bbox.ymin AS lat,
+          bbox.xmin AS lon
+        FROM read_parquet('${base}/theme=places/type=place/*.parquet')
+        WHERE ${filter};
+      `);
     }
-    if (!resp.ok) throw new Error(`Failed to fetch catalog: ${resp.status} ${resp.statusText}`);
-    const buf = await resp.arrayBuffer();
-    await db.registerFileBuffer(DUCKLAKE_CATALOG, new Uint8Array(buf));
+  }
 
-    setStatus("Loading DuckLake catalog…");
-    // ducklake is compiled into duckdb-wasm 1.33.1+, so INSTALL is not needed.
-    await conn.query(`LOAD ducklake;`);
-    await conn.query(`ATTACH 'ducklake:${DUCKLAKE_CATALOG}' AS overture_catalog;`);
+  async function materializeLondonAddresses(base) {
+    const filter = `bbox IS NOT NULL
+        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
+        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
+    // Try postalcode (2026 schema) then address_levels fallback.
+    try {
+      await conn.query(`
+        CREATE OR REPLACE TABLE london_addresses AS
+        SELECT
+          id,
+          CAST(street AS VARCHAR)     AS street,
+          CAST(postalcode AS VARCHAR) AS postcode,
+          CAST(country AS VARCHAR)    AS country,
+          bbox.ymin AS lat,
+          bbox.xmin AS lon
+        FROM read_parquet('${base}/theme=addresses/type=address/*.parquet')
+        WHERE ${filter};
+      `);
+    } catch (_) {
+      await conn.query(`
+        CREATE OR REPLACE TABLE london_addresses AS
+        SELECT
+          id,
+          CAST(address_levels[1].value AS VARCHAR) AS street,
+          CAST(postalcode AS VARCHAR)              AS postcode,
+          CAST(country AS VARCHAR)                 AS country,
+          bbox.ymin AS lat,
+          bbox.xmin AS lon
+        FROM read_parquet('${base}/theme=addresses/type=address/*.parquet')
+        WHERE ${filter};
+      `);
+    }
+  }
 
-    setStatus("Creating raw views from DuckLake catalog…");
+  async function materializeLondonBuildings(base) {
+    const filter = `bbox IS NOT NULL
+        AND bbox.xmin >= ${LON_W} AND bbox.xmax <= ${LON_E}
+        AND bbox.ymin >= ${LON_S} AND bbox.ymax <= ${LON_N}`;
     await conn.query(`
-      CREATE OR REPLACE VIEW places_raw AS
-      SELECT * FROM overture_catalog.places_raw;
+      CREATE OR REPLACE TABLE london_buildings AS
+      SELECT
+        id,
+        CAST(names.primary AS VARCHAR) AS name,
+        CAST(height AS DOUBLE)         AS height,
+        CAST(num_floors AS INTEGER)    AS num_floors,
+        CAST(country AS VARCHAR)       AS country,
+        bbox.xmin AS xmin, bbox.ymin AS ymin,
+        bbox.xmax AS xmax, bbox.ymax AS ymax,
+        (bbox.ymin + bbox.ymax) / 2.0  AS lat,
+        (bbox.xmin + bbox.xmax) / 2.0  AS lon
+      FROM read_parquet('${base}/theme=buildings/type=building/*.parquet')
+      WHERE ${filter};
     `);
-    await conn.query(`
-      CREATE OR REPLACE VIEW addresses_raw AS
-      SELECT * FROM overture_catalog.addresses_raw;
-    `);
-    await conn.query(`
-      CREATE OR REPLACE VIEW buildings_raw AS
-      SELECT * FROM overture_catalog.buildings_raw;
-    `);
-    await conn.query(`
-      CREATE OR REPLACE VIEW divisions_raw AS
-      SELECT * FROM overture_catalog.divisions_raw;
-    `);
-    await conn.query(`
-      CREATE OR REPLACE VIEW segments_raw AS
-      SELECT * FROM overture_catalog.segments_raw;
-    `);
-
-    return "DuckLake catalog";
   }
 
   // ---------------------------------------------------------------------------
@@ -906,253 +918,63 @@ LIMIT 20;`
       db = new duckdb.AsyncDuckDB(logger, new Worker(workerUrl));
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
-      
 
       // ── Resource limits ───────────────────────────────────────────────────
-      // Cap memory well below the hard 4 GB WASM address-space ceiling.
       await conn.query(`SET memory_limit='3.3GB';`);
-      // Route spill/temp files to WASM MEMFS /tmp.  500 MB is a comfortable
-      // ceiling given that MEMFS is RAM-backed anyway; adjust if needed.
       await conn.query(`SET temp_directory='/tmp/duckdb_tmp';`);
       await conn.query(`SET max_temp_directory_size='500MB';`);
-
-      // ── Performance tuning ────────────────────────────────────────────────
-      // Cache remote Parquet footers in memory — avoids re-fetching metadata
-      // on every query when reading from httpfs.
-      // Permit the planner to reorder output rows, unlocking faster parallel
-      // aggregation and hash-join paths.
       await conn.query(`SET preserve_insertion_order=false;`);
-      // httpfs is compiled into the DuckDB-WASM EH bundle — LOAD only, no INSTALL.
-      // INSTALL would try to download a binary from extensions.duckdb.org and
-      // fail with "Failed to fetch" in browser environments.
-      setStatus("Loading httpfs extension…");
+
+      // ── Load extensions (both compiled into the DuckDB-WASM EH bundle) ───
+      // LOAD only — INSTALL would try to download from extensions.duckdb.org
+      // and fail in browser environments.
+      setStatus("Loading httpfs and spatial extensions…");
       await conn.query(`LOAD httpfs;`);
-      
-      // Work around a DuckDB-WASM spatial/CRS initialization issue seen with
-      // GeoParquet files. Forcing the default coordinate systems to initialize
-      // before LOAD spatial can avoid `stoi: no conversion` during GeoParquet
-      // metadata handling in some 1.33.1-dev builds.
-      try {
-        await conn.query(`SELECT * FROM duckdb_coordinate_systems();`);
-      } catch (e) {
-        console.warn("duckdb_coordinate_systems() warm-up failed:", e.message);
-      }
-      
-      // spatial is optional — ST_* functions need it but the projected views
-      // below use only bbox arithmetic, so init succeeds either way.
-      try {
-        await conn.query(`LOAD spatial;`);
-      } catch (_) {
-        console.warn("spatial extension not available; ST_* functions will not work");
-      }
+      await conn.query(`LOAD spatial;`);
 
+      // ── Configure S3 for anonymous access to Overture's public bucket ────
+      await conn.query(`
+        CREATE OR REPLACE SECRET overture_s3 (
+          TYPE s3,
+          PROVIDER config,
+          KEY_ID '',
+          SECRET '',
+          REGION 'us-west-2',
+          USE_SSL true
+        );
+      `);
 
-      
-      const rawViewSource = await createRawViewsFromDuckLake();
+      const BASE =
+        `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}`;
 
-      setStatus(`Creating friendly projected views… (${rawViewSource})`);
+      // ── Materialise London-scoped in-memory tables ───────────────────────
+      // Data is read once from Overture's public S3 Parquet files and stored
+      // in DuckDB's in-memory store for the session.  Parquet row-group
+      // statistics + the London bbox filter let DuckDB skip the vast majority
+      // of row groups in each partition file.
+      setStatus("Materialising london_places… (scanning Overture S3 — may take 20–60 s)");
+      await materializeLondonPlaces(BASE);
 
-      // ── Places projected view ──────────────────────────────────────────────
-      // Geometry is GeoParquet (WKB) since the 2026 releases; use bbox centroid
-      // for lat/lon.  categories.primary is deprecated — use basic_category.
-      let placesViewOk = false;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE VIEW places AS
-          SELECT
-            id,
-            CAST(names.primary AS VARCHAR)   AS name,
-            CAST(basic_category AS VARCHAR)  AS category,
-            CAST(country AS VARCHAR)         AS country,
-            bbox.ymin                        AS lat,
-            bbox.xmin                        AS lon
-          FROM places_raw
-          WHERE bbox IS NOT NULL;
-        `);
-        placesViewOk = true;
-      } catch (e) {
-        console.warn("places v1 projected view failed:", e.message);
-      }
-      if (!placesViewOk) {
-        // Fallback for any remaining schema variation
-        try {
-          await conn.query(`
-            CREATE OR REPLACE VIEW places AS
-            SELECT
-              id,
-              CAST(names.primary AS VARCHAR)        AS name,
-              CAST(categories.primary AS VARCHAR)   AS category,
-              CAST(country AS VARCHAR)              AS country,
-              bbox.ymin                             AS lat,
-              bbox.xmin                             AS lon
-            FROM places_raw
-            WHERE bbox IS NOT NULL;
-          `);
-          placesViewOk = true;
-        } catch (e2) {
-          console.warn("places v2 projected view also failed:", e2.message);
-        }
-      }
+      setStatus("Materialising london_addresses…");
+      await materializeLondonAddresses(BASE);
 
-      // ── Addresses projected view ───────────────────────────────────────────
-      // 2026 schema: postalcode (not postcode), geometry is WKB — use bbox.
-      let addressViewOk = false;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE VIEW addresses AS
-          SELECT
-            id,
-            CAST(street AS VARCHAR)    AS street,
-            CAST(postalcode AS VARCHAR) AS postcode,
-            CAST(country AS VARCHAR)   AS country,
-            bbox.ymin                  AS lat,
-            bbox.xmin                  AS lon
-          FROM addresses_raw
-          WHERE bbox IS NOT NULL;
-        `);
-        addressViewOk = true;
-      } catch (e) {
-        console.warn("addresses v1 projected view failed:", e.message);
-      }
+      setStatus("Materialising london_buildings…");
+      await materializeLondonBuildings(BASE);
 
-      if (!addressViewOk) {
-        try {
-          await conn.query(`
-            CREATE OR REPLACE VIEW addresses AS
-            SELECT
-              id,
-              CAST(address_levels[1].value AS VARCHAR) AS street,
-              CAST(postalcode AS VARCHAR)              AS postcode,
-              CAST(country AS VARCHAR)                 AS country,
-              bbox.ymin                                AS lat,
-              bbox.xmin                                AS lon
-            FROM addresses_raw
-            WHERE bbox IS NOT NULL;
-          `);
-          addressViewOk = true;
-        } catch (e2) {
-          console.warn("addresses v2 projected view also failed:", e2.message);
-        }
-      }
+      const counts = await Promise.all([
+        conn.query(`SELECT COUNT(*) AS n FROM london_places`),
+        conn.query(`SELECT COUNT(*) AS n FROM london_addresses`),
+        conn.query(`SELECT COUNT(*) AS n FROM london_buildings`),
+      ]);
+      const [np, na, nb] = counts.map(r => r.toArray()[0].toJSON().n);
 
-      if (!addressViewOk) {
-        console.warn("No friendly addresses view created; addresses_raw still available.");
-      }
-
-      // ── Buildings projected view ───────────────────────────────────────────
-      let buildingsViewOk = false;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE VIEW buildings AS
-          SELECT
-            id,
-            CAST(names.primary AS VARCHAR) AS name,
-            CAST(height AS DOUBLE)         AS height,
-            CAST(num_floors AS INTEGER)    AS num_floors,
-            CAST(country AS VARCHAR)       AS country,
-            bbox.xmin AS xmin, bbox.ymin AS ymin,
-            bbox.xmax AS xmax, bbox.ymax AS ymax,
-            (bbox.ymin + bbox.ymax) / 2.0  AS lat,
-            (bbox.xmin + bbox.xmax) / 2.0  AS lon
-          FROM buildings_raw
-          WHERE bbox IS NOT NULL;
-        `);
-        buildingsViewOk = true;
-      } catch (e) {
-        console.warn("buildings projected view failed:", e.message);
-      }
-
-      // ── Divisions projected view ───────────────────────────────────────────
-      let divisionsViewOk = false;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE VIEW divisions AS
-          SELECT
-            id,
-            CAST(names.primary AS VARCHAR)   AS name,
-            CAST(subtype AS VARCHAR)         AS subtype,
-            CAST(country AS VARCHAR)         AS country,
-            bbox.xmin AS xmin, bbox.ymin AS ymin,
-            bbox.xmax AS xmax, bbox.ymax AS ymax,
-            (bbox.ymin + bbox.ymax) / 2.0    AS lat,
-            (bbox.xmin + bbox.xmax) / 2.0    AS lon
-          FROM divisions_raw
-          WHERE bbox IS NOT NULL;
-        `);
-        divisionsViewOk = true;
-      } catch (e) {
-        console.warn("divisions projected view failed:", e.message);
-      }
-
-      // ── Segments projected view ────────────────────────────────────────────
-      let segmentsViewOk = false;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE VIEW segments AS
-          SELECT
-            id,
-            CAST(class AS VARCHAR)        AS road_class,
-            CAST(surface AS VARCHAR)      AS road_surface,
-            bbox.xmin AS xmin, bbox.ymin AS ymin,
-            bbox.xmax AS xmax, bbox.ymax AS ymax,
-            (bbox.ymin + bbox.ymax) / 2.0  AS lat,
-            (bbox.xmin + bbox.xmax) / 2.0  AS lon
-          FROM segments_raw
-          WHERE bbox IS NOT NULL;
-        `);
-        segmentsViewOk = true;
-      } catch (e) {
-        console.warn("segments projected view failed:", e.message);
-      }
-
-      setStatus("Creating UK views…");
-
-      // ── UK views — the raw data is already UK-filtered so these are simple
-      //    aliases of the projected views, kept for clue/query compatibility.
-      if (placesViewOk) {
-        await conn.query(`
-          CREATE OR REPLACE VIEW places_uk AS
-          SELECT * FROM places;
-        `);
-      }
-
-      if (addressViewOk) {
-        await conn.query(`
-          CREATE OR REPLACE VIEW addresses_uk AS
-          SELECT * FROM addresses;
-        `);
-      }
-
-      if (buildingsViewOk) {
-        await conn.query(`
-          CREATE OR REPLACE VIEW buildings_uk AS
-          SELECT * FROM buildings;
-        `);
-      }
-
-      if (divisionsViewOk) {
-        await conn.query(`
-          CREATE OR REPLACE VIEW divisions_uk AS
-          SELECT * FROM divisions;
-        `);
-      }
-
-      if (segmentsViewOk) {
-        await conn.query(`
-          CREATE OR REPLACE VIEW segments_uk AS
-          SELECT * FROM segments;
-        `);
-      }
-
-      const viewSummary = [
-        placesViewOk    ? "places_uk ✓"    : "places_uk ✗ (use places_raw)",
-        addressViewOk   ? "addresses_uk ✓" : "addresses_uk ✗ (use addresses_raw)",
-        buildingsViewOk ? "buildings_uk ✓" : "buildings_uk ✗ (use buildings_raw)",
-        divisionsViewOk ? "divisions_uk ✓" : "divisions_uk ✗ (use divisions_raw)",
-        segmentsViewOk  ? "segments_uk ✓"  : "segments_uk ✗ (use segments_raw)",
-      ].join("  |  ");
-
-      setStatus(`DuckDB ready (${rawViewSource}) — ${viewSummary}`, "ok");
+      setStatus(
+        `DuckDB ready — london_places (${np.toLocaleString()}) ` +
+        `· london_addresses (${na.toLocaleString()}) ` +
+        `· london_buildings (${nb.toLocaleString()}) ` +
+        `· ST_* enabled`,
+        "ok"
+      );
     } catch (err) {
       console.error("DuckDB init error:", err);
       setStatus(`Initialization failed: ${err.message}`, "err");
@@ -1252,17 +1074,20 @@ LIMIT 20;`
 
   function insertBboxTemplate() {
     sqlEditor.value =
-`-- Data is pre-filtered to the UK bbox — query any table freely.
--- You can still add a tighter spatial filter for a specific city:
+`-- All tables (london_places, london_addresses, london_buildings) are already
+-- scoped to Greater London. Add a tighter filter to zoom in on a district:
 SELECT p.name, p.category, p.lat, p.lon
-FROM places AS p
-WHERE p.lat BETWEEN 51.46 AND 51.56
-  AND p.lon BETWEEN -0.20 AND -0.05
+FROM london_places AS p
+WHERE p.lat BETWEEN 51.50 AND 51.52   -- City of London
+  AND p.lon BETWEEN -0.10 AND 0.00
 LIMIT 50;
 
--- For struct-bbox tables (buildings, divisions, segments) use:
--- WHERE xmax >= west  AND xmin <= east
---   AND ymax >= south AND ymin <= north`;
+-- For buildings (has xmin/ymin/xmax/ymax columns) use:
+-- WHERE xmax >= ${LON_W} AND xmin <= ${LON_E}
+--   AND ymax >= ${LON_S} AND ymin <= ${LON_N}
+
+-- Spatial queries with ST_* (spatial extension loaded at init):
+-- ST_Distance(ST_Point(lon, lat), ST_Point(ref_lon, ref_lat)) * 111000  → metres`;
     selectTab("editor");
     sqlEditor.focus();
   }
@@ -1334,7 +1159,7 @@ LIMIT 50;
   // Boot
   // ---------------------------------------------------------------------------
   renderClues();
-  const defaultClue = clues.find(c => c.id === "places-warmup");
+  const defaultClue = clues.find(c => c.id === "places-sample");
   if (defaultClue) selectClue(defaultClue);
 </script>
 </body>

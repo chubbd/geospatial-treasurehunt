@@ -1,15 +1,27 @@
 # Geospatial SQL Treasure Hunt
 
-A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
-UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no backend required.
+A browser-based geospatial treasure hunt powered by **DuckDB-WASM**.  On first
+load the app reads from the Overture Maps public S3 bucket and materialises
+three in-memory tables scoped to Greater London:
+
+| Table | Contents |
+|---|---|
+| `london_places` | POIs — cafes, museums, shops, … |
+| `london_addresses` | Street addresses with postcodes |
+| `london_buildings` | Building footprints with height/floors |
+
+All queries (including **`ST_*` spatial functions**) run entirely in the browser
+against these in-memory tables — no backend, no database file, no data
+pre-processing step required.
 
 ## Live Demo
 
 **GitHub Pages:** [https://chubbd.github.io/geospatial-treasurehunt/](https://chubbd.github.io/geospatial-treasurehunt/)
 
-> ⚠️ **Must be served over HTTP(S).** The app uses `SharedArrayBuffer` (required by
-> DuckDB-WASM) which is blocked by browsers when opened via `file://`. Use GitHub Pages,
-> a local HTTP server, or any static hosting service.
+> ⚠️ **Must be served over HTTP(S).** The app uses `SharedArrayBuffer`
+> (required by DuckDB-WASM) which is blocked by browsers when opened via
+> `file://`. Use GitHub Pages, a local HTTP server, or any static hosting
+> service.
 
 ---
 
@@ -17,13 +29,12 @@ UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no 
 
 | Feature | Details |
 |---|---|
-| **Map** | MapLibre GL (dark basemap, click-to-inspect popups) |
+| **Map** | MapLibre GL (dark basemap, click-to-inspect popups), centred on London |
 | **SQL editor** | Multi-line textarea with Ctrl/Cmd+Enter shortcut to run |
-| **Overture themes** | Places · Addresses · Buildings · Divisions · Transportation |
-| **UK-pre-filtered data** | One Parquet file per theme, pre-built to the UK bbox — no global scans |
-| **Schema inspection** | `DESCRIBE` demo queries for every theme |
-| **Defensive views** | Multiple fallback projections tried; graceful messaging when schemas differ |
-| **Theme filter** | Filter the clue list by Overture theme |
+| **London tables** | Places · Addresses · Buildings — materialised in-memory at startup |
+| **Spatial SQL** | `ST_Distance`, `ST_Point`, `ST_Within` and all other `ST_*` functions enabled via `LOAD spatial` |
+| **Schema inspection** | `DESCRIBE` demo queries for every table |
+| **Theme filter** | Filter the clue list by Places / Addresses / Buildings / Spatial / Schema |
 
 ---
 
@@ -32,7 +43,8 @@ UK-pre-filtered [Overture Maps](https://overturemaps.org/) Parquet files — no 
 1. Fork or clone this repository.
 2. Go to **Settings → Pages** and set the source branch to `main` (root `/`).
 3. GitHub will build and publish the site — usually within 60 seconds.
-4. Open the published URL, click **⚡ Init DuckDB**, wait ~2–5 s, then start exploring!
+4. Open the published URL, click **⚡ Init DuckDB**, wait 20–60 s for London
+   data to materialise, then start exploring!
 
 ---
 
@@ -58,72 +70,49 @@ Then open `http://localhost:8080` in your browser.
 
 ---
 
-## Overture Data Source
+## Data Source
 
-The app now prefers **GitHub Release assets** in this repository and falls back to
-a tiny same-origin **DuckLake catalog** that points at Overture's public S3 files
-when the browser cannot read the release assets directly.
-
-The release is tagged `overture-uk-{overture_release}` (e.g.
-`overture-uk-2026-03-18.0`) and contains UK-filtered Parquet assets plus an
-`overture_uk.ducklake` catalog:
+London data is read live from the **Overture Maps** public S3 bucket at
+initialisation:
 
 ```
-https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
-  places_uk.parquet
-  addresses_uk.parquet
-  buildings_uk.parquet
-  divisions_uk.parquet
-  segments_uk.parquet
-  overture_uk.ducklake
+s3://overturemaps-us-west-2/release/2026-03-18.0/
+  theme=places/type=place/*.parquet        → london_places
+  theme=addresses/type=address/*.parquet   → london_addresses
+  theme=buildings/type=building/*.parquet  → london_buildings
 ```
 
-When GitHub Releases are readable from the browser, DuckDB reads a single Parquet
-footer per theme instead of discovering headers from hundreds of S3 partition
-files. When that path is blocked by browser/CORS behavior, the fallback DuckLake
-catalog keeps the site working without hosting the full dataset on GitHub Pages.
+DuckDB-WASM uses Parquet row-group statistics to skip the vast majority of
+row groups outside the Greater London bbox, keeping the initial scan fast.
+The materialised tables are held in DuckDB's in-memory store for the rest of
+the browser session — all subsequent queries are instant.
 
-**Why Hilbert re-sort?**  Overture's source files are already Hilbert-sorted, but
-against a global (world) extent.  Re-sorting the UK subset against the UK extent
-tightens the spatial clustering within each row group, so DuckDB-WASM can skip
-many more row groups when executing a city-sized bbox query (e.g. "all buildings
-in London"), making in-browser queries noticeably faster.  The build workflow uses
-DuckDB 1.5.1 for its improved geospatial handling and full GeoParquet support.
+**Greater London bounding box used at materialisation:**
 
-### Rebuilding the data
-
-Run the **Build UK Overture Parquets** workflow manually from the Actions tab:
-
-1. Go to **Actions → Build UK Overture Parquets → Run workflow**.
-2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
-3. The workflow installs DuckDB 1.5.1 + spatial/ducklake extensions, downloads the
-   source data from the Overture public S3 bucket, filters to the UK bbox,
-   re-sorts by Hilbert curve (UK extent), builds a small `overture_uk.ducklake`
-   catalog, and uploads everything to a matching release.
-4. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
+```
+west  = -0.55   east  =  0.35
+south = 51.25   north = 51.75
+```
 
 ---
 
-## UK Bounding Box
+## Spatial SQL examples
 
-The Parquet files are pre-filtered to the UK bounding box, so no global scan is
-ever needed in the browser.  You can apply a tighter filter to zoom in on a city:
-
-```
-west  = -8.75   east  =  1.90
-south = 49.80   north = 60.95
-```
-
-**For point data (places, addresses):**
 ```sql
-WHERE lon BETWEEN -0.20 AND -0.05
-  AND lat BETWEEN 51.46 AND 51.56   -- central London
-```
+-- Nearest places to Tower Bridge
+SELECT name, category,
+  round(ST_Distance(ST_Point(lon, lat), ST_Point(-0.0754, 51.5055)) * 111000) AS dist_m
+FROM london_places
+WHERE name IS NOT NULL
+ORDER BY dist_m
+LIMIT 20;
 
-**For object bboxes (buildings, divisions, segments):**
-```sql
-WHERE xmax >= west  AND xmin <= east
-  AND ymax >= south AND ymin <= north
+-- Places within 500 m of St Paul's Cathedral
+SELECT name, category, lat, lon
+FROM london_places
+WHERE ST_Distance(ST_Point(lon, lat), ST_Point(-0.0984, 51.5138)) < 0.0045
+ORDER BY ST_Distance(ST_Point(lon, lat), ST_Point(-0.0984, 51.5138))
+LIMIT 30;
 ```
 
 ---
@@ -132,14 +121,34 @@ WHERE xmax >= west  AND xmin <= east
 
 ```
 index.html          ← entire app (single static file)
-  ├─ MapLibre GL    ← map rendering (CDN)
-  └─ DuckDB-WASM    ← in-browser SQL engine (CDN / jsDelivr)
-       ├─ httpfs    ← reads Parquet files and the hosted DuckLake catalog
-       └─ ducklake  ← fallback catalog pointing at Overture S3 Parquet files
+  ├─ MapLibre GL    ← map rendering (CDN), centred on London
+  └─ DuckDB-WASM    ← in-browser SQL engine (vendored JS + CDN WASM)
+       ├─ httpfs    ← reads Overture Parquet files from public S3
+       └─ spatial   ← ST_* spatial functions
 
 .github/workflows/
-  build-uk-parquets.yml  ← builds Parquet release assets + DuckLake catalog
-  deploy.yml             ← deploys index.html and overture_uk.ducklake to GitHub Pages
+  deploy.yml        ← deploys index.html to GitHub Pages on push to main
+  duckdbwasmdownload.yml   ← (optional) re-vendor the DuckDB-WASM JS module
+  build-overture-ducklake.yml  ← archived; built the old DuckLake catalog
 ```
 
-No build step. No server. No API keys needed.
+No build step.  No server.  No API keys needed.
+
+### Why no DuckLake?
+
+The previous approach fetched a `.ducklake` SQLite catalog from GitHub Releases
+and used the `ducklake` DuckDB extension to attach it as a virtual catalog
+over Overture S3 Parquet files.  This introduced three coupled version-mismatch
+risks (DuckLake spec, DuckDB storage format, GeoParquet schema enforcement).
+
+The current approach removes all three risks by:
+
+1. Reading directly from the Overture S3 Parquet files via `httpfs` (already
+   bundled in the DuckDB-WASM EH build — no extension download needed).
+2. Materialising the London subset as plain in-memory DuckDB tables once per
+   session.
+3. Loading the `spatial` extension (also bundled) to enable `ST_*` functions.
+
+OPFS persistence can be added as a future enhancement without changing the
+teaching/query layer.
+
