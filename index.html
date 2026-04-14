@@ -909,7 +909,6 @@ LIMIT 20;`
       // ── Performance tuning ────────────────────────────────────────────────
       // Cache remote Parquet footers in memory — avoids re-fetching metadata
       // on every query when reading from httpfs.
-      //await conn.query(`SET enable_object_cache=true;`);
       // Permit the planner to reorder output rows, unlocking faster parallel
       // aggregation and hash-join paths.
       await conn.query(`SET preserve_insertion_order=false;`);
@@ -937,7 +936,6 @@ LIMIT 20;`
         console.warn("spatial extension not available; ST_* functions will not work");
       }
 
-      //await conn.query(`SET enable_geoparquet = false;`);
 
       
       const rawViewSource = await createRawViewsFromDuckLake();
