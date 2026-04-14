@@ -354,7 +354,7 @@
       <button id="clearMapBtn">🗑 Clear Map</button>
       <button id="bboxSnippetBtn">🔍 London Examples</button>
     </div>
-    <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
+    <div id="status">Not initialised. Click ⚡ Init DuckDB to start.</div>
     <div class="tab-bar">
       <button class="tab-btn active" id="tabSql" data-tab="editor">✏️ Query</button>
       <button class="tab-btn" id="tabResults" data-tab="results">📊 Results</button>
@@ -1140,7 +1140,7 @@ LIMIT 10;`
   // ---------------------------------------------------------------------------
   async function runSql() {
     if (!conn) {
-      setStatus("Initialize DuckDB first (click ⚡ Init DuckDB).", "err");
+      setStatus("Initialise DuckDB first (click ⚡ Init DuckDB).", "err");
       return;
     }
     const sql = sqlEditor.value.trim();
