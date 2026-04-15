@@ -888,20 +888,13 @@ LIMIT 5;`
     // ── london.places ──────────────────────────────────────────────────────
     setStatus("Materialising london.places from Overture S3… (bbox filter applied)");
     let placesOk = false;
-    const geomPlaces = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
+    //const geomPlaces = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
     for (const catCol of ["categories.primary", "basic_category"]) {
       if (placesOk) break;
       try {
         await conn.query(`
           CREATE OR REPLACE TABLE london.places AS
-          SELECT
-            id,
-            CAST(names.primary AS VARCHAR)   AS name,
-            CAST(${catCol} AS VARCHAR)        AS category,
-            CAST(country AS VARCHAR)          AS country,
-            CAST(bbox.ymin AS DOUBLE)         AS lat,
-            CAST(bbox.xmin AS DOUBLE)         AS lon
-            ${geomPlaces}
+          SELECT *
           FROM read_parquet('${S3_PLACES}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
@@ -913,20 +906,14 @@ LIMIT 5;`
 
     setStatus("Materialising london.addresses from Overture S3… (bbox filter applied)");
     let addressesOk = false;
-    const geomAddresses = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
+    //const geomAddresses = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
     for (const streetExpr of ["street", "address_levels[1].value"]) {
       if (addressesOk) break;
       try {
         await conn.query(`
           CREATE OR REPLACE TABLE london.addresses AS
           SELECT
-            id,
-            CAST(${streetExpr} AS VARCHAR)    AS street,
-            CAST(postalcode AS VARCHAR)        AS postcode,  -- Overture uses 'postalcode'; alias to standard UK term
-            CAST(country AS VARCHAR)           AS country,
-            CAST(bbox.ymin AS DOUBLE)          AS lat,
-            CAST(bbox.xmin AS DOUBLE)          AS lon
-            ${geomAddresses}
+          *
           FROM read_parquet('${S3_ADDRESSES}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
@@ -941,27 +928,12 @@ LIMIT 5;`
     // building_area_m2 is a bbox-based approximation (accurate enough for teaching).
     setStatus("Materialising london.buildings from Overture S3… (bbox filter applied — may take ~15–30 s on first load)");
     let buildingsOk = false;
-    const geomBuildings = spatialLoaded
-      ? "ST_GeomFromWKB(geometry) AS geometry"
-      : "geometry AS geometry_wkb";
+    //const geomBuildings = spatialLoaded ? "ST_GeomFromWKB(geometry) AS geometry" : "geometry AS geometry_wkb";
     try {
       await conn.query(`
         CREATE OR REPLACE TABLE london.buildings AS
         SELECT
-          id,
-          CAST(names.primary AS VARCHAR)     AS name,
-          CAST(height AS DOUBLE)             AS height,
-          CAST(num_floors AS INTEGER)        AS num_floors,
-          CAST(ROUND(
-            (bbox.xmax - bbox.xmin) * 111320.0 *
-            COS(RADIANS((bbox.ymin + bbox.ymax) / 2.0)) *
-            (bbox.ymax - bbox.ymin) * 110540.0
-          ) AS INTEGER)                      AS building_area_m2,
-          (bbox.ymin + bbox.ymax) / 2.0      AS lat,
-          (bbox.xmin + bbox.xmax) / 2.0      AS lon,
-          bbox.xmin AS xmin, bbox.ymin AS ymin,
-          bbox.xmax AS xmax, bbox.ymax AS ymax,
-          ${geomBuildings}
+        *
         FROM read_parquet('${S3_BUILDINGS}', hive_partitioning=1)
         WHERE ${bboxWhere};
       `);
