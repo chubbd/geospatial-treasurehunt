@@ -389,12 +389,12 @@
   // Greater London bounding box
   const LONDON = { west: -0.510, south: 51.286, east: 0.334, north: 51.692 };
 
-  // Overture release tag — must match the GitHub Release used to build the UK Parquets.
+  // Overture release tag — used to construct S3 paths directly from the Overture public bucket.
   const OVERTURE_RELEASE = "2026-03-18.0";
-  // Base URL for pre-built UK-filtered Parquet assets (GitHub Release).
-  const RELEASE_BASE =
-    `https://github.com/chubbd/geospatial-treasurehunt/releases/download/` +
-    `overture-uk-${OVERTURE_RELEASE}`;
+  // S3 paths for each Overture theme (public bucket, us-west-2).
+  const S3_PLACES    = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=places/type=place/*.parquet`;
+  const S3_ADDRESSES = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=addresses/type=address/*.parquet`;
+  const S3_BUILDINGS = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=buildings/type=building/*.parquet`;
 
   // ---------------------------------------------------------------------------
   // Clues / demo queries
@@ -886,10 +886,10 @@ LIMIT 5;`
     await conn.query(`CREATE SCHEMA IF NOT EXISTS london;`);
 
     // ── london.places ──────────────────────────────────────────────────────
-    setStatus("Materialising london.places from UK Parquet… (London bbox filter)");
+    setStatus("Materialising london.places from Overture S3… (bbox filter applied)");
     let placesOk = false;
     const geomPlaces = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
-    for (const catCol of ["basic_category", "categories.primary"]) {
+    for (const catCol of ["categories.primary", "basic_category"]) {
       if (placesOk) break;
       try {
         await conn.query(`
@@ -902,7 +902,7 @@ LIMIT 5;`
             CAST(bbox.ymin AS DOUBLE)         AS lat,
             CAST(bbox.xmin AS DOUBLE)         AS lon
             ${geomPlaces}
-          FROM read_parquet('${RELEASE_BASE}/places_uk.parquet')
+          FROM read_parquet('${S3_PLACES}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         placesOk = true;
@@ -911,8 +911,7 @@ LIMIT 5;`
       }
     }
 
-    // ── london.addresses ───────────────────────────────────────────────────
-    setStatus("Materialising london.addresses…");
+    setStatus("Materialising london.addresses from Overture S3… (bbox filter applied)");
     let addressesOk = false;
     const geomAddresses = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
     for (const streetExpr of ["street", "address_levels[1].value"]) {
@@ -928,7 +927,7 @@ LIMIT 5;`
             CAST(bbox.ymin AS DOUBLE)          AS lat,
             CAST(bbox.xmin AS DOUBLE)          AS lon
             ${geomAddresses}
-          FROM read_parquet('${RELEASE_BASE}/addresses_uk.parquet')
+          FROM read_parquet('${S3_ADDRESSES}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         addressesOk = true;
@@ -940,7 +939,7 @@ LIMIT 5;`
     // ── london.buildings ───────────────────────────────────────────────────
     // Full polygon geometry is kept for ST_* spatial operations.
     // building_area_m2 is a bbox-based approximation (accurate enough for teaching).
-    setStatus("Materialising london.buildings… (full polygon geometry — may take ~15–30 s on first load)");
+    setStatus("Materialising london.buildings from Overture S3… (bbox filter applied — may take ~15–30 s on first load)");
     let buildingsOk = false;
     const geomBuildings = spatialLoaded
       ? "ST_GeomFromWKB(geometry) AS geometry"
@@ -963,7 +962,7 @@ LIMIT 5;`
           bbox.xmin AS xmin, bbox.ymin AS ymin,
           bbox.xmax AS xmax, bbox.ymax AS ymax,
           ${geomBuildings}
-        FROM read_parquet('${RELEASE_BASE}/buildings_uk.parquet')
+        FROM read_parquet('${S3_BUILDINGS}', hive_partitioning=1)
         WHERE ${bboxWhere};
       `);
       buildingsOk = true;
@@ -1005,6 +1004,8 @@ LIMIT 5;`
       // httpfs is compiled into the DuckDB-WASM EH bundle — LOAD only, no INSTALL.
       setStatus("Loading extensions…");
       await conn.query(`LOAD httpfs;`);
+      // Overture public bucket is in us-west-2; anonymous access (no credentials needed).
+      await conn.query(`SET s3_region='us-west-2';`);
 
       // Work around a DuckDB-WASM spatial/CRS initialization issue seen with
       // GeoParquet files in some builds.
