@@ -1,0 +1,121 @@
+name: Build London Parquet manifests (Overture)
+
+on:
+  workflow_dispatch:
+    inputs:
+      overture_release:
+        description: "Overture release tag (e.g. 2026-03-18.0)"
+        required: true
+        default: "2026-03-18.0"
+
+permissions:
+  contents: write
+
+env:
+  DUCKDB_VERSION: "1.5.1"
+
+  # Greater London bbox (your numbers)
+  LON_WEST:  "-0.510"
+  LON_SOUTH: "51.286"
+  LON_EAST:  "0.334"
+  LON_NORTH: "51.692"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          curl -fsSL \
+            "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip" \
+            -o duckdb.zip
+          unzip -qo duckdb.zip -d bin
+          chmod +x bin/duckdb
+          bin/duckdb --version
+
+      - name: Build London manifest files (places / addresses / buildings)
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          set -euo pipefail
+          mkdir -p manifests
+
+          BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
+
+          # DuckDB preamble: enable S3 via httpfs.
+          PREAMBLE="
+            INSTALL httpfs; LOAD httpfs;
+            CREATE OR REPLACE SECRET overture_s3 (
+              TYPE s3,
+              PROVIDER config,
+              KEY_ID '', SECRET '',
+              REGION 'us-west-2',
+              USE_SSL true
+            );
+            SET threads=4;
+          "
+
+          # Function to generate a manifest for a theme/type.
+          # Uses Parquet footer statistics (parquet_metadata) to avoid scanning full data.
+          build_manifest() {
+            local theme="$1"
+            local type="$2"
+            local out="manifests/london_${theme}_${OVERTURE_RELEASE}.txt"
+            local glob="${BASE}/theme=${theme}/type=${type}/*.parquet"
+
+            echo "==> Building manifest for theme=${theme} type=${type}"
+            echo "    Input: ${glob}"
+            echo "    Output: ${out}"
+
+            bin/duckdb -c "
+              ${PREAMBLE}
+
+              -- Aggregate row-group stats up to per-file bbox extents.
+              -- Assumes bbox is a struct with fields xmin/xmax/ymin/ymax and that parquet_metadata
+              -- exposes those as paths bbox.xmin, bbox.xmax, bbox.ymin, bbox.ymax.
+              COPY (
+                WITH per_file AS (
+                  SELECT
+                    file_name,
+
+                    -- file-level min/max for each bbox component
+                    MIN(CAST(stats_min AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.xmin') AS xmin_min,
+                    MAX(CAST(stats_max AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.xmax') AS xmax_max,
+                    MIN(CAST(stats_min AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.ymin') AS ymin_min,
+                    MAX(CAST(stats_max AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.ymax') AS ymax_max
+
+                  FROM parquet_metadata('${glob}')
+                  GROUP BY file_name
+                )
+                SELECT file_name
+                FROM per_file
+                WHERE
+                  xmin_min <= ${LON_EAST}  AND xmax_max >= ${LON_WEST}
+                  AND ymin_min <= ${LON_NORTH} AND ymax_max >= ${LON_SOUTH}
+                ORDER BY file_name
+              ) TO '${out}' (HEADER false);
+            "
+
+            echo "    Wrote $(wc -l < "${out}") files"
+          }
+
+          build_manifest places place
+          build_manifest addresses address
+          build_manifest buildings building
+
+      - name: Commit manifests to repo
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add manifests/
+          git commit -m "Add London parquet manifests for Overture ${OVERTURE_RELEASE}" || echo "No changes"
+          git push
