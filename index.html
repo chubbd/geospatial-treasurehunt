@@ -923,7 +923,7 @@ LIMIT 5;`
           SELECT
             id,
             CAST(${streetExpr} AS VARCHAR)    AS street,
-            CAST(postalcode AS VARCHAR)        AS postcode,
+            CAST(postalcode AS VARCHAR)        AS postcode,  -- Overture uses 'postalcode'; alias to standard UK term
             CAST(country AS VARCHAR)           AS country,
             CAST(bbox.ymin AS DOUBLE)          AS lat,
             CAST(bbox.xmin AS DOUBLE)          AS lon
