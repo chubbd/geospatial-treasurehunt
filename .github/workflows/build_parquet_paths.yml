@@ -78,24 +78,33 @@ jobs:
               -- Aggregate row-group stats up to per-file bbox extents.
               -- Assumes bbox is a struct with fields xmin/xmax/ymin/ymax and that parquet_metadata
               -- exposes those as paths bbox.xmin, bbox.xmax, bbox.ymin, bbox.ymax.
+              
               COPY (
-                WITH per_file AS (
+                WITH meta AS (
                   SELECT
                     file_name,
-
-                    -- file-level min/max for each bbox component
-                    MIN(CAST(stats_min AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.xmin') AS xmin_min,
-                    MAX(CAST(stats_max AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.xmax') AS xmax_max,
-                    MIN(CAST(stats_min AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.ymin') AS ymin_min,
-                    MAX(CAST(stats_max AS DOUBLE)) FILTER (WHERE path_in_schema = 'bbox.ymax') AS ymax_max
-
+                    path_in_schema,
+                    TRY_CAST(stats_min AS DOUBLE) AS min_d,
+                    TRY_CAST(stats_max AS DOUBLE) AS max_d
                   FROM parquet_metadata('${glob}')
+                  WHERE path_in_schema IN ('bbox, xmin','bbox, xmax','bbox, ymin','bbox, ymax')
+                ),
+                per_file AS (
+                  SELECT
+                    file_name,
+                    MIN(min_d) FILTER (WHERE path_in_schema='bbox, xmin') AS xmin_min,
+                    MAX(max_d) FILTER (WHERE path_in_schema='bbox, xmax') AS xmax_max,
+                    MIN(min_d) FILTER (WHERE path_in_schema='bbox, ymin') AS ymin_min,
+                    MAX(max_d) FILTER (WHERE path_in_schema='bbox, ymax') AS ymax_max
+                  FROM meta
                   GROUP BY file_name
                 )
                 SELECT file_name
                 FROM per_file
                 WHERE
-                  xmin_min <= ${LON_EAST}  AND xmax_max >= ${LON_WEST}
+                  xmin_min IS NOT NULL AND xmax_max IS NOT NULL
+                  AND ymin_min IS NOT NULL AND ymax_max IS NOT NULL
+                  AND xmin_min <= ${LON_EAST}  AND xmax_max >= ${LON_WEST}
                   AND ymin_min <= ${LON_NORTH} AND ymax_max >= ${LON_SOUTH}
                 ORDER BY file_name
               ) TO '${out}' (HEADER false);
