@@ -904,7 +904,7 @@ LIMIT 5;`
         await conn.query(`
           CREATE OR REPLACE TABLE london.places AS
           SELECT *
-          FROM read_parquet('${listLiteral}', hive_partitioning=1)
+          FROM read_parquet(${listLiteral}, hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         placesOk = true;
@@ -923,7 +923,7 @@ LIMIT 5;`
           CREATE OR REPLACE TABLE london.addresses AS
           SELECT
           *
-          FROM read_parquet('${listLiteral}', hive_partitioning=1)
+          FROM read_parquet(${listLiteral}, hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         addressesOk = true;
@@ -943,7 +943,7 @@ LIMIT 5;`
         CREATE OR REPLACE TABLE london.buildings AS
         SELECT
         *
-        FROM read_parquet('${listLiteral}', hive_partitioning=1)
+        FROM read_parquet(${listLiteral}, hive_partitioning=1)
         WHERE ${bboxWhere};
       `);
       buildingsOk = true;
