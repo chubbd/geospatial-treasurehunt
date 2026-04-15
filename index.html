@@ -392,6 +392,15 @@
   // Overture release tag — used to construct S3 paths directly from the Overture public bucket.
   const OVERTURE_RELEASE = "2026-03-18.0";
   // S3 paths for each Overture theme (public bucket, us-west-2).
+
+
+  const text = await (await fetch(`./manifests/london_buildings_${OVERTURE_RELEASE}.txt`)).text();
+  const files = text.split("\n").map(x => x.trim()).filter(Boolean);
+
+  // pass as list literal
+  const listLiteral = "[" + files.map(f => `'${f.replace(/'/g,"''")}'`).join(",") + "]";
+
+  
   const S3_PLACES    = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=places/type=place/*.parquet`;
   const S3_ADDRESSES = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=addresses/type=address/*.parquet`;
   const S3_BUILDINGS = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=buildings/type=building/*.parquet`;
@@ -895,7 +904,7 @@ LIMIT 5;`
         await conn.query(`
           CREATE OR REPLACE TABLE london.places AS
           SELECT *
-          FROM read_parquet('${S3_PLACES}', hive_partitioning=1)
+          FROM read_parquet('${listLiteral}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         placesOk = true;
@@ -914,7 +923,7 @@ LIMIT 5;`
           CREATE OR REPLACE TABLE london.addresses AS
           SELECT
           *
-          FROM read_parquet('${S3_ADDRESSES}', hive_partitioning=1)
+          FROM read_parquet('${listLiteral}', hive_partitioning=1)
           WHERE ${bboxWhere};
         `);
         addressesOk = true;
@@ -934,7 +943,7 @@ LIMIT 5;`
         CREATE OR REPLACE TABLE london.buildings AS
         SELECT
         *
-        FROM read_parquet('${S3_BUILDINGS}', hive_partitioning=1)
+        FROM read_parquet('${listLiteral}', hive_partitioning=1)
         WHERE ${bboxWhere};
       `);
       buildingsOk = true;
