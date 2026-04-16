@@ -102,7 +102,6 @@ jobs:
           }
 
           build_manifest places place
-          //build_manifest addresses address
           build_manifest buildings building
 
       - name: Commit manifests to repo
