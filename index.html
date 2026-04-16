@@ -328,7 +328,6 @@
     <span style="font-size:11px; color:var(--muted); align-self:center;">Filter:</span>
     <button class="active" data-theme="all">All</button>
     <button data-theme="places">Places</button>
-    <button data-theme="addresses">Addresses</button>
     <button data-theme="buildings">Buildings</button>
     <button data-theme="spatial">Spatial</button>
     <button data-theme="schema">Schema</button>
@@ -338,8 +337,8 @@
 
   <div class="footer-note">
     Tip: click ⚡ <em>Init DuckDB</em> first — it materialises London data into
-    <code class="inline">london.places</code>, <code class="inline">london.addresses</code>,
-    and <code class="inline">london.buildings</code> (first load ~10–30 s).
+    <code class="inline">london.places</code> and <code class="inline">london.buildings</code>
+    (first load ~10–30 s).
   </div>
 </aside>
 
@@ -363,7 +362,7 @@
     <section id="editorPane" class="tab-active">
       <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first — this materialises London data into memory.
 -- Then select a clue and click "📋 Insert Demo SQL".
--- Tables: london.places · london.addresses · london.buildings
+-- Tables: london.places · london.buildings
 </textarea>
     </section>
 
@@ -402,7 +401,6 @@
 
   
   const S3_PLACES    = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=places/type=place/*.parquet`;
-  const S3_ADDRESSES = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=addresses/type=address/*.parquet`;
   const S3_BUILDINGS = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=buildings/type=building/*.parquet`;
 
   // ---------------------------------------------------------------------------
@@ -440,22 +438,20 @@ DESCRIBE london.places;`
     {
       id: "schema-addresses",
       theme: "schema",
-      title: "Schema: addresses columns",
-      text: "Inspect the london.addresses schema.",
-      hint: "Look for street, postcode, lat, lon columns.",
-      starterSql: `-- Inspect london.addresses schema
-DESCRIBE london.addresses;`
+      title: "Schema: place addresses structure",
+      text: "Inspect how addresses are stored on london.places.",
+      hint: "Look for the addresses column as a list of structs (freeform, locality, postcode, region, country).",
+      starterSql: `-- Inspect london.places schema (addresses is nested)
+DESCRIBE london.places;`
     },
     {
       id: "schema-counts",
       theme: "schema",
       title: "Schema: row counts",
-      text: "How many places, addresses, and buildings are in the London dataset?",
-      hint: "UNION ALL three COUNT(*) queries to see all at once.",
+      text: "How many places and buildings are in the London dataset?",
+      hint: "UNION ALL two COUNT(*) queries to see all at once.",
       starterSql: `-- Row counts for all London tables
 SELECT 'places'    AS tbl, COUNT(*) AS rows FROM london.places
-UNION ALL
-SELECT 'addresses' AS tbl, COUNT(*) AS rows FROM london.addresses
 UNION ALL
 SELECT 'buildings' AS tbl, COUNT(*) AS rows FROM london.buildings;`
     },
@@ -521,44 +517,62 @@ ORDER BY cnt DESC
 LIMIT 25;`
     },
 
-    // ── Addresses ──────────────────────────────────────────────────────────
+    // ── Place addresses (from london.places.addresses) ─────────────────────
     {
       id: "addresses-warmup",
-      theme: "addresses",
-      title: "Addresses: London sample",
-      text: "Sample 25 London addresses. Explore the address schema.",
-      hint: "london.addresses has street, postcode, lat, lon.",
-      starterSql: `-- 25 London addresses
-SELECT id, street, postcode, lat, lon
-FROM london.addresses
+      theme: "places",
+      title: "Places: address sample",
+      text: "Sample 25 London place addresses from the nested addresses column.",
+      hint: "UNNEST london.places.addresses to access freeform, locality, postcode, region, country.",
+      starterSql: `-- 25 London place addresses from london.places.addresses
+SELECT
+  p.id,
+  addr.freeform AS freeform,
+  addr.locality,
+  addr.postcode,
+  addr.region,
+  addr.country,
+  p.lat,
+  p.lon
+FROM london.places p
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
 LIMIT 25;`
     },
     {
       id: "addresses-postcode",
-      theme: "addresses",
-      title: "Addresses: EC1 postcode search",
-      text: "Find addresses in the EC1 London postcode area.",
-      hint: "Filter postcode ILIKE 'EC1%'.",
-      starterSql: `-- Addresses in the EC1 London postcode area
-SELECT street, postcode, lat, lon
-FROM london.addresses
-WHERE postcode ILIKE 'EC1%'
-ORDER BY postcode, street
+      theme: "places",
+      title: "Places: EC1 postcode search",
+      text: "Find place addresses in the EC1 London postcode area.",
+      hint: "UNNEST addresses then filter addr.postcode ILIKE 'EC1%'.",
+      starterSql: `-- Place addresses in the EC1 London postcode area
+SELECT
+  addr.freeform AS freeform,
+  addr.locality,
+  addr.postcode,
+  addr.region,
+  addr.country,
+  p.lat,
+  p.lon
+FROM london.places p
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
+WHERE addr.postcode ILIKE 'EC1%'
+ORDER BY addr.postcode, addr.freeform
 LIMIT 40;`
     },
     {
       id: "addresses-postcode-counts",
-      theme: "addresses",
-      title: "Addresses: count by postcode district",
-      text: "Which London postcode districts have the most addresses?",
-      hint: "Use LEFT(postcode, 4) for the district prefix (e.g. SW1A, EC1A).",
-      starterSql: `-- London postcode districts by address count
+      theme: "places",
+      title: "Places: count by postcode district",
+      text: "Which London postcode districts have the most place addresses?",
+      hint: "UNNEST addresses, then use LEFT(addr.postcode, 4) for district prefixes (e.g. SW1A, EC1A).",
+      starterSql: `-- London postcode districts by place-address count
 SELECT
-  LEFT(postcode, 4) AS district,
+  LEFT(addr.postcode, 4) AS district,
   COUNT(*) AS cnt
-FROM london.addresses
-WHERE postcode IS NOT NULL
-  AND LENGTH(postcode) >= 4
+FROM london.places p
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
+WHERE addr.postcode IS NOT NULL
+  AND LENGTH(addr.postcode) >= 4
 GROUP BY district
 ORDER BY cnt DESC
 LIMIT 25;`
@@ -866,7 +880,7 @@ LIMIT 5;`
       .map(r => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [+r[lon], +r[lat]] },
-        properties: { ...r, label: r.name || r.street || r.id || "" }
+        properties: { ...r, label: r.name || r.freeform || r.street || r.id || "" }
       }));
     const src = map.getSource("qpts");
     if (!src) return;
@@ -913,25 +927,6 @@ LIMIT 5;`
       }
     }
 
-    setStatus("Materialising london.addresses from Overture S3… (bbox filter applied)");
-    let addressesOk = false;
-    //const geomAddresses = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
-    for (const streetExpr of ["street", "address_levels[1].value"]) {
-      if (addressesOk) break;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE TABLE london.addresses AS
-          SELECT
-          *
-          FROM read_parquet(${listLiteral}, hive_partitioning=1)
-          WHERE ${bboxWhere};
-        `);
-        addressesOk = true;
-      } catch (e) {
-        console.warn(`london.addresses (${streetExpr}) failed:`, e.message);
-      }
-    }
-
     // ── london.buildings ───────────────────────────────────────────────────
     // Full polygon geometry is kept for ST_* spatial operations.
     // building_area_m2 is a bbox-based approximation (accurate enough for teaching).
@@ -951,7 +946,7 @@ LIMIT 5;`
       console.warn("london.buildings failed:", e.message);
     }
 
-    return { placesOk, addressesOk, buildingsOk, spatialLoaded };
+    return { placesOk, buildingsOk, spatialLoaded };
   }
 
   // ---------------------------------------------------------------------------
@@ -1009,7 +1004,6 @@ LIMIT 5;`
 
       const statusParts = [
         summary.placesOk    ? "london.places ✓"    : "london.places ✗",
-        summary.addressesOk ? "london.addresses ✓" : "london.addresses ✗",
         summary.buildingsOk ? "london.buildings ✓" : "london.buildings ✗",
         summary.spatialLoaded ? "spatial ✓" : "spatial ✗ (ST_* unavailable)",
       ].join("  |  ");
