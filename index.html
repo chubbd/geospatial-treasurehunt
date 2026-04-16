@@ -392,10 +392,28 @@
   const OVERTURE_RELEASE = "2026-03-18.0";
   // S3 paths for each Overture theme (public bucket, us-west-2).
 
+
+  function s3ToHttps(url, region = "us-west-2") {
+    if (!url.startsWith("s3://")) return url;
+  
+    // Strip scheme and split bucket/key
+    const noScheme = url.slice("s3://".length);
+    const slash = noScheme.indexOf("/");
+    const bucket = noScheme.slice(0, slash);
+    const key = noScheme.slice(slash + 1);
+  
+    // Virtual-hosted–style URL (AWS recommended)
+    
+    return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  }
+
+
+  
   // Fetch a Parquet file once (single GET) and register it in DuckDB as a local virtual file.
   async function fetchAndRegisterParquet(localName, url) {
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Fetch failed (${resp.status}): ${url}`);
+    const httpUrl = s3ToHttps(url, "us-west-2");   // 👈 convert here
+    const resp = await fetch(httpUrl);
+    if (!resp.ok) throw new Error(`Fetch failed (${resp.status}): ${httpUrl}`);
   
     // Parquet bytes in JS memory
     let buf = new Uint8Array(await resp.arrayBuffer());
