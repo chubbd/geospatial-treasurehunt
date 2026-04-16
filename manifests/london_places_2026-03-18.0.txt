@@ -1,1 +1,0 @@
-s3://overturemaps-us-west-2/release/2026-03-18.0/theme=places/type=place/part-00007-81b5bde3-e38e-5978-b804-87eb46b45653-c000.zstd.parquet
