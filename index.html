@@ -1054,7 +1054,6 @@ LIMIT 5;`
       db = new duckdb.AsyncDuckDB(logger, new Worker(workerUrl));
       await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
       conn = await db.connect();
-      await conn.query(`SET force_download = true;`);
       // ── Resource limits ───────────────────────────────────────────────────
       // Cap memory well below the hard 4 GB WASM address-space ceiling.
       await conn.query(`SET memory_limit='3.3GB';`);
