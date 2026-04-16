@@ -64,31 +64,65 @@ jobs:
           # Uses Parquet footer statistics (parquet_metadata) to avoid scanning full data.
  
           build_manifest() {
-              local theme="$1"
-              local type="$2"
-              local out="manifests/london_${theme}_${OVERTURE_RELEASE}.txt"
-              local glob="${BASE}/theme=${theme}/type=${type}/*.parquet"
-  
-              echo "==> Building manifest for theme=${theme} type=${type}"
-              echo "    Input:  ${glob}"
-              echo "    Output: ${out}"
-  
-              # Use geo_bbox from parquet_metadata (row-group bbox) — robust and fast.
-              bin/duckdb -c "
-                ${PREAMBLE}
-                COPY (
-                  SELECT DISTINCT file_name
+            local theme="$1"
+            local type="$2"
+            local out="manifests/london_${theme}_${OVERTURE_RELEASE}.txt"
+            local glob="${BASE}/theme=${theme}/type=${type}/*.parquet"
+          
+            echo "==> Building manifest for theme=${theme} type=${type}"
+            echo "    Input:  ${glob}"
+            echo "    Output: ${out}"
+          
+            # Optional: show bbox paths once per theme (cheap sanity check)
+            bin/duckdb -csv -noheader -c "
+              ${PREAMBLE}
+              SELECT DISTINCT path_in_schema
+              FROM parquet_metadata('${glob}')
+              WHERE path_in_schema LIKE 'bbox,%'
+              ORDER BY 1;
+            " | sed 's/^/    bbox path: /'
+          
+            # Build manifest:
+            # 1) Pull row-group stats for bbox.* only
+            # 2) Pivot to one row per (file_name, row_group_id)
+            # 3) Keep row-groups whose bbox overlaps London
+            # 4) Output distinct file_name values
+            bin/duckdb -c "
+              ${PREAMBLE}
+              COPY (
+                WITH meta AS (
+                  SELECT
+                    file_name,
+                    row_group_id,
+                    path_in_schema,
+                    TRY_CAST(stats_min AS DOUBLE) AS min_d,
+                    TRY_CAST(stats_max AS DOUBLE) AS max_d
                   FROM parquet_metadata('${glob}')
-                  WHERE
-                    geo_bbox.xmin <= ${LON_EAST}  AND geo_bbox.xmax >= ${LON_WEST}
-                    AND geo_bbox.ymin <= ${LON_NORTH} AND geo_bbox.ymax >= ${LON_SOUTH}
-                  ORDER BY file_name
-                ) TO '${out}' (HEADER false);
-              "
-  
-              echo "    Wrote $(wc -l < "${out}") files"
-            }
-
+                  WHERE path_in_schema IN ('bbox, xmin','bbox, xmax','bbox, ymin','bbox, ymax')
+                ),
+                rg AS (
+                  SELECT
+                    file_name,
+                    row_group_id,
+                    MIN(min_d) FILTER (WHERE path_in_schema='bbox, xmin') AS xmin,
+                    MAX(max_d) FILTER (WHERE path_in_schema='bbox, xmax') AS xmax,
+                    MIN(min_d) FILTER (WHERE path_in_schema='bbox, ymin') AS ymin,
+                    MAX(max_d) FILTER (WHERE path_in_schema='bbox, ymax') AS ymax
+                  FROM meta
+                  GROUP BY file_name, row_group_id
+                )
+                SELECT DISTINCT file_name
+                FROM rg
+                WHERE
+                  xmin IS NOT NULL AND xmax IS NOT NULL AND ymin IS NOT NULL AND ymax IS NOT NULL
+                  AND xmin <= ${LON_EAST}  AND xmax >= ${LON_WEST}
+                  AND ymin <= ${LON_NORTH} AND ymax >= ${LON_SOUTH}
+                ORDER BY file_name
+              ) TO '${out}' (HEADER false);
+            "
+          
+            echo "    Wrote $(wc -l < "${out}") files"
+          }
           build_manifest places place
           build_manifest addresses address
           build_manifest buildings building
