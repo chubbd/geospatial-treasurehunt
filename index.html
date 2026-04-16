@@ -392,15 +392,43 @@
   const OVERTURE_RELEASE = "2026-03-18.0";
   // S3 paths for each Overture theme (public bucket, us-west-2).
 
+  // Fetch a Parquet file once (single GET) and register it in DuckDB as a local virtual file.
+  async function fetchAndRegisterParquet(localName, url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Fetch failed (${resp.status}): ${url}`);
+  
+    // Parquet bytes in JS memory
+    let buf = new Uint8Array(await resp.arrayBuffer());
+  
+    // Register as a local file inside DuckDB-WASM
+    await db.registerFileBuffer(localName, buf);
+  
+    return buf; // caller can null it after use
+  }
+  
+  // Best-effort removal of the registered file
+  async function unregisterParquet(localName) {
+    // Some builds expose a dropFile API; if present use it
+    if (typeof db.dropFile === "function") {
+      await db.dropFile(localName);
+      return;
+    }
+    // Fallback: overwrite with empty content (breaks reference to large buffer)
+    await db.registerFileBuffer(localName, new Uint8Array(0));
+  }
 
+  async function loadManifest(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch manifest: ${url}`);
+    return (await resp.text())
+      .split("\n")
+      .map(x => x.trim())
+      .filter(Boolean);
+  }
   
-  const buildingsTxt = await (await fetch(`./manifests/london_buildings_${OVERTURE_RELEASE}.txt`)).text();
-  const buildingsFiles = buildingsTxt.split("\n").map(x => x.trim()).filter(Boolean);
-  const buildingsList = "[" + buildingsFiles.map(f => `'${f.replace(/'/g,"''")}'`).join(",") + "]";
-  
-  const placesTxt = await (await fetch(`./manifests/london_places_${OVERTURE_RELEASE}.txt`)).text();
-  const placesFiles = placesTxt.split("\n").map(x => x.trim()).filter(Boolean);
-  const placesList = "[" + placesFiles.map(f => `'${f.replace(/'/g,"''")}'`).join(",") + "]";
+  const buildingsFiles = await loadManifest(`./manifests/london_buildings_${OVERTURE_RELEASE}.txt`);
+  const placesFiles    = await loadManifest(`./manifests/london_places_${OVERTURE_RELEASE}.txt`);
+
 
 
  
@@ -898,59 +926,115 @@ LIMIT 5;`
     }
   }
 
+
+  // Append a list of Parquets into a table by repeatedly fetching+registering one file at a time.
+  // This avoids the Parquet-over-HTTP range-request storm (many 206s) by doing one GET per file. [1](https://docs.github.com/en/rest/using-the-rest-api/using-cors-and-jsonp-to-make-cross-origin-requests)[2](https://socket.dev/npm/package/@duckdb/duckdb-wasm/files)
+  async function ingestParquetListToTable({
+    schema,
+    table,
+    files,
+    selectSqlForLocalFile,
+    statusPrefix,
+  }) {
+    await conn.query(`CREATE SCHEMA IF NOT EXISTS ${schema};`);
+  
+    // Reuse one temp filename and overwrite it each iteration
+    const localName = `${schema}_${table}_tmp.parquet`;
+  
+    for (let i = 0; i < files.length; i++) {
+      const url = files[i];
+      setStatus(`${statusPrefix}: downloading ${i + 1}/${files.length}…`);
+  
+      let buf = null;
+      try {
+        buf = await fetchAndRegisterParquet(localName, url);
+  
+        setStatus(`${statusPrefix}: ingesting ${i + 1}/${files.length}…`);
+  
+        if (i === 0) {
+          await conn.query(`
+            CREATE OR REPLACE TABLE ${schema}.${table} AS
+            ${selectSqlForLocalFile(localName)}
+          `);
+        } else {
+          await conn.query(`
+            INSERT INTO ${schema}.${table}
+            ${selectSqlForLocalFile(localName)}
+          `);
+        }
+      } finally {
+        // Release JS reference so GC can reclaim it
+        buf = null;
+        // Ensure DuckDB no longer holds the big bytes under this filename
+        await unregisterParquet(localName);
+      }
+    }
+  }
+
+  
   // ---------------------------------------------------------------------------
   // London materialisation
   // ---------------------------------------------------------------------------
+
   async function materializeLondonTables(spatialLoaded) {
     const L = LONDON;
+  
+    // Correct bbox intersection predicate:
+    // feature_xmax >= west AND feature_xmin <= east
+    // feature_ymax >= south AND feature_ymin <= north
     const bboxWhere = `
-      bbox.xmin <= ${L.east}
-      AND bbox.xmax >= ${L.west}
-      AND bbox.ymin <= ${L.north}
-      AND bbox.ymax >= ${L.south}`;
-
-    setStatus("Creating london schema…");
-    await conn.query(`CREATE SCHEMA IF NOT EXISTS london;`);
-
-    // ── london.places ──────────────────────────────────────────────────────
-    setStatus("Materialising london.places from Overture S3… (bbox filter applied)");
-    let placesOk = false;
-    //const geomPlaces = spatialLoaded ? ", ST_GeomFromWKB(geometry) AS geometry" : "";
-    for (const catCol of ["categories.primary", "basic_category"]) {
-      if (placesOk) break;
-      try {
-        await conn.query(`
-          CREATE OR REPLACE TABLE london.places AS
-          SELECT * EXCLUDE (sources)
-          FROM read_parquet(${placesList}, hive_partitioning=1)
-          WHERE ${bboxWhere};
-        `);
-        placesOk = true;
-      } catch (e) {
-        console.warn(`london.places (${catCol}) failed:`, e.message);
-      }
-    }
-
-    // ── london.buildings ───────────────────────────────────────────────────
-    // Full polygon geometry is kept for ST_* spatial operations.
-    // building_area_m2 is a bbox-based approximation (accurate enough for teaching).
-    setStatus("Materialising london.buildings from Overture S3… (bbox filter applied — may take ~15–30 s on first load)");
-    let buildingsOk = false;
-    //const geomBuildings = spatialLoaded ? "ST_GeomFromWKB(geometry) AS geometry" : "geometry AS geometry_wkb";
-    try {
-      await conn.query(`
-        CREATE OR REPLACE TABLE london.buildings AS
-        SELECT
-        * EXCLUDE (sources)
-        FROM read_parquet(${buildingList}, hive_partitioning=1)
-        WHERE ${bboxWhere};
-      `);
-      buildingsOk = true;
-    } catch (e) {
-      console.warn("london.buildings failed:", e.message);
-    }
-
-    return { placesOk, buildingsOk, spatialLoaded };
+      bbox.xmax >= ${L.west} AND bbox.xmin <= ${L.east}
+      AND bbox.ymax >= ${L.south} AND bbox.ymin <= ${L.north}
+    `;
+  
+    // Load manifests (can be 1 file today, many in future)
+    const placesFiles = await loadManifest(`./manifests/london_places_${OVERTURE_RELEASE}.txt`);
+    const buildingsFiles = await loadManifest(`./manifests/london_buildings_${OVERTURE_RELEASE}.txt`);
+  
+    if (!placesFiles.length) throw new Error("Places manifest is empty.");
+    if (!buildingsFiles.length) throw new Error("Buildings manifest is empty.");
+  
+    // Cheap centroid for plotting
+    const lonExpr = `(bbox.xmin + bbox.xmax) / 2.0`;
+    const latExpr = `(bbox.ymin + bbox.ymax) / 2.0`;
+  
+    // --- Places: keep it lean (SELECT * in WASM is expensive)
+    // Use COALESCE(categories.primary, basic_category) because schema differs across releases.
+    const placesSelect = (localName) => `
+      SELECT
+      * EXCLUDE (sources)
+      FROM read_parquet('${localName}')
+      WHERE ${bboxWhere}
+    `;
+  
+    // --- Buildings: exclude heavy sources, add lat/lon
+    // If you truly need all fields, remove EXCLUDE but expect slower ingest.
+    const buildingsSelect = (localName) => `
+      SELECT
+        * EXCLUDE (sources),
+      FROM read_parquet('${localName}')
+      WHERE ${bboxWhere}
+    `;
+  
+    // Build london.places by appending one Parquet at a time
+    await ingestParquetListToTable({
+      schema: "london",
+      table: "places",
+      files: placesFiles,
+      selectSqlForLocalFile: placesSelect,
+      statusPrefix: "Materialising london.places",
+    });
+  
+    // Build london.buildings similarly
+    await ingestParquetListToTable({
+      schema: "london",
+      table: "buildings",
+      files: buildingsFiles,
+      selectSqlForLocalFile: buildingsSelect,
+      statusPrefix: "Materialising london.buildings",
+    });
+  
+    return { placesOk: true, buildingsOk: true, spatialLoaded };
   }
 
   // ---------------------------------------------------------------------------
