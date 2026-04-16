@@ -115,7 +115,7 @@ Total is well within DuckDB-WASM's practical ~3 GB ceiling.
 | `id` | VARCHAR | Overture feature ID |
 | `name` | VARCHAR | Place name |
 | `category` | VARCHAR | Primary category (e.g. `museum`, `restaurant`) |
-| `addresses` | LIST<STRUCT> | Nested address entries (e.g. `freeform`, `locality`, `postcode`, `region`, `country`) |
+| `addresses` | LIST<STRUCT> | Nested address entries, e.g. `STRUCT(freeform VARCHAR, locality VARCHAR, postcode VARCHAR, region VARCHAR, country VARCHAR)` |
 | `lat` / `lon` | DOUBLE | Point coordinates |
 | `geometry` | GEOMETRY | Point geometry for `ST_*` ops |
 
