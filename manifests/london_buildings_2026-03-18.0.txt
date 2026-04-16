@@ -1,0 +1,1 @@
+s3://overturemaps-us-west-2/release/2026-03-18.0/theme=buildings/type=building/part-00126-1eb74fd3-789e-5556-9867-e8aada011acb-c000.zstd.parquet
