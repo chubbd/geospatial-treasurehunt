@@ -15,10 +15,10 @@ env:
   DUCKDB_VERSION: "1.5.1"
 
   # Greater London bbox (your numbers)
-  LON_WEST:  "-0.510"
-  LON_SOUTH: "51.286"
-  LON_EAST:  "0.334"
-  LON_NORTH: "51.692"
+  WEST:  "-0.510"
+  SOUTH: "51.286"
+  EAST:  "0.334"
+  NORTH: "51.692"
 
 jobs:
   build:
@@ -90,10 +90,10 @@ jobs:
                   )
                 )
                 WHERE
-                  bbox.xmax >= ${LON_WEST}
-                  AND bbox.xmin <= ${LON_EAST}
-                  AND bbox.ymax >= ${LON_SOUTH}
-                  AND bbox.ymin <= ${LON_NORTH}
+                  bbox.xmax >= ${WEST}
+                  AND bbox.xmin <= ${EAST}
+                  AND bbox.ymax >= ${SOUTH}
+                  AND bbox.ymin <= ${NORTH}
                 ORDER BY filename
               ) TO '${out}' (HEADER false);
             "
@@ -102,7 +102,7 @@ jobs:
           }
 
           build_manifest places place
-          build_manifest addresses address
+          //build_manifest addresses address
           build_manifest buildings building
 
       - name: Commit manifests to repo
