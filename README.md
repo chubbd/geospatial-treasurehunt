@@ -19,11 +19,11 @@ A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
 |---|---|
 | **Map** | MapLibre GL (dark basemap, click-to-inspect popups) |
 | **SQL editor** | Multi-line textarea with Ctrl/Cmd+Enter shortcut to run |
-| **London tables** | `london.places` · `london.addresses` · `london.buildings` |
+| **London tables** | `london.places` · `london.buildings` |
 | **Full polygon geometry** | Buildings materialised with complete polygon footprints for `ST_*` ops |
 | **Spatial SQL** | `ST_Distance`, `ST_Intersects`, `ST_Contains`, `ST_GeomFromText` and more |
 | **Schema inspection** | `DESCRIBE` and row-count queries for every London table |
-| **Theme filter** | Filter clue list by Places / Addresses / Buildings / Spatial / Schema |
+| **Theme filter** | Filter clue list by Places / Buildings / Spatial / Schema |
 
 ---
 
@@ -66,8 +66,8 @@ On `⚡ Init DuckDB`, the app:
 2. Loads the **`httpfs`** and **`spatial`** extensions (both compiled into the bundle).
 3. Reads the pre-built **UK-filtered Parquet files** from GitHub Releases via `httpfs`,
    applying a **Greater London bounding box filter** during the read.
-4. **Materialises** three in-memory DuckDB tables — `london.places`,
-   `london.addresses`, and `london.buildings` — for the rest of the session.
+4. **Materialises** two in-memory DuckDB tables — `london.places`
+   and `london.buildings` — for the rest of the session.
 
 Students then query these tables directly with full spatial SQL — no repeated remote
 fetches, no DuckLake catalog, no version-coupling.
@@ -89,7 +89,6 @@ UK dataset.  Typical in-session footprints at the 2026-03-18.0 release:
 | Table | Expected rows | Approx. in-memory |
 |---|---|---|
 | `london.places` | ~100K | ~20 MB |
-| `london.addresses` | ~500K–1.5M | ~100 MB |
 | `london.buildings` | ~200K–600K (with polygons) | ~200–400 MB |
 
 Total is well within DuckDB-WASM's practical ~3 GB ceiling.
@@ -116,17 +115,7 @@ Total is well within DuckDB-WASM's practical ~3 GB ceiling.
 | `id` | VARCHAR | Overture feature ID |
 | `name` | VARCHAR | Place name |
 | `category` | VARCHAR | Primary category (e.g. `museum`, `restaurant`) |
-| `country` | VARCHAR | Country code |
-| `lat` / `lon` | DOUBLE | Point coordinates |
-| `geometry` | GEOMETRY | Point geometry for `ST_*` ops |
-
-### `london.addresses`
-| Column | Type | Notes |
-|---|---|---|
-| `id` | VARCHAR | Overture feature ID |
-| `street` | VARCHAR | Street name |
-| `postcode` | VARCHAR | UK postcode |
-| `country` | VARCHAR | Country code |
+| `addresses` | LIST<STRUCT> | Nested address entries, e.g. `STRUCT(freeform VARCHAR, locality VARCHAR, postcode VARCHAR, region VARCHAR, country VARCHAR)` |
 | `lat` / `lon` | DOUBLE | Point coordinates |
 | `geometry` | GEOMETRY | Point geometry for `ST_*` ops |
 
@@ -160,11 +149,19 @@ WHERE ST_Intersects(
 )
 ORDER BY height DESC NULLS LAST;
 
--- EC1 postcode addresses
-SELECT street, postcode, lat, lon
-FROM london.addresses
-WHERE postcode ILIKE 'EC1%'
-ORDER BY postcode, street
+-- EC1 postcode place addresses
+SELECT
+  addr.freeform,
+  addr.locality,
+  addr.postcode,
+  addr.region,
+  addr.country,
+  p.lat,
+  p.lon
+FROM london.places p
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
+WHERE addr.postcode ILIKE 'EC1%'
+ORDER BY addr.postcode, addr.freeform
 LIMIT 40;
 ```
 
@@ -197,7 +194,6 @@ and uploaded as GitHub Release assets tagged `overture-uk-{overture_release}`:
 ```
 https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
   places_uk.parquet
-  addresses_uk.parquet
   buildings_uk.parquet
   divisions_uk.parquet
   segments_uk.parquet
@@ -235,4 +231,3 @@ in student queries.  Add a tighter filter to zoom into a specific borough or str
 WHERE lat BETWEEN 51.490 AND 51.520
   AND lon BETWEEN -0.040 AND 0.010
 ```
-
