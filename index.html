@@ -790,7 +790,9 @@ LIMIT 15;`
       text: "Use ST_Intersects to find all buildings whose footprint touches a search polygon around The Gherkin.",
       hint: "ST_Intersects(geometry, envelope) returns true when they share any space. The Gherkin is at (51.5145, -0.0802).",
       starterSql: `-- Buildings intersecting a search envelope around The Gherkin (30 St Mary Axe)
-SELECT name, height, building_area_m2, lat, lon
+SELECT *,
+ST_Y(ST_Centroid(geometry)) AS lat,
+ST_X(ST_Centroid(geometry)) AS lon
 FROM london.buildings
 WHERE ST_Intersects(
   geometry,
@@ -1061,6 +1063,7 @@ LIMIT 5;`
     const placesSelect = (localName) => `
       SELECT
       * EXCLUDE (sources),
+      
       FROM read_parquet('${localName}')
       WHERE ${bboxWhere}
     `;
@@ -1256,11 +1259,13 @@ LIMIT 5;`
 `-- Greater London bbox: west=-0.510, south=51.286, east=0.334, north=51.692
 -- All london.* tables are pre-materialised to Greater London — no global filter needed.
 -- Add a tighter spatial filter for a specific area, e.g. Canary Wharf:
-SELECT name, height, building_area_m2, lat, lon
+SELECT *,
+ST_Y(geometry) AS lat,
+ST_X(geometry) AS lon,
 FROM london.buildings
 WHERE height IS NOT NULL
-  AND lat BETWEEN 51.490 AND 51.520
-  AND lon BETWEEN -0.040 AND 0.010
+  AND ST_Y(geometry) BETWEEN 51.490 AND 51.520
+  AND ST_X(geometry) BETWEEN -0.040 AND 0.010
 ORDER BY height DESC
 LIMIT 20;
 
