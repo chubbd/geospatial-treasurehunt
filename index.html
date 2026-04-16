@@ -880,7 +880,7 @@ LIMIT 5;`
       .map(r => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [+r[lon], +r[lat]] },
-        properties: { ...r, label: r.name || r.freeform || r.street || r.id || "" }
+        properties: { ...r, label: r.name || r.freeform || r.id || "" }
       }));
     const src = map.getSource("qpts");
     if (!src) return;
