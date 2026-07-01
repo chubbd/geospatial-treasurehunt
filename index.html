@@ -999,8 +999,8 @@ LIMIT 5;`
   }) {
     await conn.query(`CREATE SCHEMA IF NOT EXISTS ${schema};`);
   
-    // Reuse one temp filename and overwrite it each iteration
-    const localName = `${schema}_${table}_tmp.parquet`;
+    // Make a unique temp filename and for each iteration
+    const localName = `${schema}_${table}_tmp_${String(i).padStart(3,"0")}.parquet`;
   
     for (let i = 0; i < files.length; i++) {
       const url = files[i];
