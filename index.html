@@ -1062,8 +1062,7 @@ LIMIT 5;`
     // Use COALESCE(categories.primary, basic_category) because schema differs across releases.
     const placesSelect = (localName) => `
       SELECT
-      * EXCLUDE (sources),
-      
+      * EXCLUDE (sources)      
       FROM read_parquet('${localName}')
       WHERE ${bboxWhere}
     `;
@@ -1072,7 +1071,7 @@ LIMIT 5;`
     // If you truly need all fields, remove EXCLUDE but expect slower ingest.
     const buildingsSelect = (localName) => `
       SELECT
-        * EXCLUDE (sources),
+        * EXCLUDE (sources)
       FROM read_parquet('${localName}')
       WHERE ${bboxWhere}
     `;
