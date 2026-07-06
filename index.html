@@ -148,11 +148,18 @@
       overflow-x: auto;
       min-height: 32px;
     }
+    .result-tab {
+      display: inline-flex;
+      align-items: stretch;
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
     .result-tab-btn {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       max-width: 190px;
+      border-right: 0;
     }
     .result-tab-title {
       overflow: hidden;
@@ -163,11 +170,16 @@
       border: 0;
       background: transparent;
       color: var(--muted);
-      padding: 0 2px;
-      border-radius: 4px;
+      padding: 0 8px;
+      border-radius: 0;
       font-size: 14px;
       line-height: 1;
       cursor: pointer;
+    }
+    .result-tab.active .result-tab-close {
+      background: rgba(103,232,249,.07);
+      border-bottom: 2px solid var(--accent);
+      margin-bottom: -1px;
     }
     .result-tab-close:hover {
       color: var(--danger);
@@ -397,9 +409,9 @@
     </section>
 
     <section id="resultsPane">
-      <div id="resultsTabs" class="tab-bar results-tabs"></div>
+      <div id="resultsTabs" class="tab-bar results-tabs" role="tablist" aria-label="SQL result tabs"></div>
       <div id="resultsMeta">No results yet.</div>
-      <div id="results">
+      <div id="results" role="tabpanel">
         <div style="padding:14px; color:var(--muted); font-size:12px;">
           Results will appear here after you run a query.
         </div>
@@ -1233,7 +1245,9 @@ function createResultTab() {
 function getReplacementResultTab() {
   if (!resultTabs.length) return createResultTab();
 
-  // DBeaver-like simple behavior: normal Run replaces the first result tab.
+  const activeTab = getActiveResultTab();
+  if (activeTab) return activeTab;
+
   activeResultTabId = resultTabs[0].id;
   return resultTabs[0];
 }
@@ -1242,18 +1256,31 @@ function renderResultTabs() {
   resultsTabsEl.innerHTML = "";
 
   for (const tab of resultTabs) {
+    const isActive = tab.id === activeResultTabId;
+    const tabButtonId = `result-tab-${tab.id}`;
+
+    const tabContainer = document.createElement("div");
+    tabContainer.className = `result-tab${isActive ? " active" : ""}`;
+
     const btn = document.createElement("button");
-    btn.className = `tab-btn result-tab-btn${tab.id === activeResultTabId ? " active" : ""}`;
+    btn.className = `tab-btn result-tab-btn${isActive ? " active" : ""}`;
     btn.type = "button";
+    btn.role = "tab";
+    btn.id = tabButtonId;
+    btn.setAttribute("aria-selected", String(isActive));
+    btn.setAttribute("aria-controls", "results");
+    btn.tabIndex = isActive ? 0 : -1;
 
     const title = document.createElement("span");
     title.className = "result-tab-title";
     title.textContent = tab.title;
 
-    const close = document.createElement("span");
+    const close = document.createElement("button");
+    close.type = "button";
     close.className = "result-tab-close";
     close.textContent = "×";
-    close.title = "Close result tab";
+    close.title = `Close ${tab.title}`;
+    close.setAttribute("aria-label", `Close ${tab.title}`);
 
     btn.addEventListener("click", () => {
       activeResultTabId = tab.id;
@@ -1262,13 +1289,15 @@ function renderResultTabs() {
     });
 
     close.addEventListener("click", (e) => {
+      e.preventDefault();
       e.stopPropagation();
       closeResultTab(tab.id);
     });
 
     btn.appendChild(title);
-    btn.appendChild(close);
-    resultsTabsEl.appendChild(btn);
+    tabContainer.appendChild(btn);
+    tabContainer.appendChild(close);
+    resultsTabsEl.appendChild(tabContainer);
   }
 }
 
@@ -1294,6 +1323,7 @@ function renderActiveResultTab() {
 
   if (!tab) {
     resultsMetaEl.textContent = "No results yet.";
+    resultsEl.removeAttribute("aria-labelledby");
     resultsEl.innerHTML = `
       <div style="padding:14px; color:var(--muted); font-size:12px;">
         Results will appear here after you run a query.
@@ -1301,6 +1331,7 @@ function renderActiveResultTab() {
     return;
   }
 
+  resultsEl.setAttribute("aria-labelledby", `result-tab-${tab.id}`);
   resultsMetaEl.textContent = tab.meta;
 
   if (tab.error) {
@@ -1492,7 +1523,8 @@ LIMIT 20;
   // ---------------------------------------------------------------------------
   document.getElementById("initBtn").addEventListener("click", initializeDuckDB);
   document.getElementById("runBtn").addEventListener("click", () => runSql({ newTab: false }));
-  document.getElementById("runNewTabBtn").addEventListener("click", () => runSql({ newTab: true }));  document.getElementById("hintBtn").addEventListener("click", showHint);
+  document.getElementById("runNewTabBtn").addEventListener("click", () => runSql({ newTab: true }));
+  document.getElementById("hintBtn").addEventListener("click", showHint);
   document.getElementById("sampleBtn").addEventListener("click", insertStarterSql);
   document.getElementById("clearMapBtn").addEventListener("click", clearMap);
   document.getElementById("bboxSnippetBtn").addEventListener("click", insertBboxTemplate);
