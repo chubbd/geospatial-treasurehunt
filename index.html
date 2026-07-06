@@ -144,6 +144,35 @@
       border-bottom: 1px solid var(--border);
       background: var(--panel);
     }
+        .results-tabs {
+      overflow-x: auto;
+      min-height: 32px;
+    }
+    .result-tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 190px;
+    }
+    .result-tab-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .result-tab-close {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 0 2px;
+      border-radius: 4px;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .result-tab-close:hover {
+      color: var(--danger);
+      background: rgba(251, 113, 133, .12);
+    }
     .tab-btn {
       padding: 7px 18px;
       font-size: 12px;
@@ -349,6 +378,7 @@
     <div class="toolbar">
       <button id="initBtn" class="warn">⚡ Init DuckDB</button>
       <button id="runBtn" class="primary">▶ Run SQL</button>
+      <button id="runNewTabBtn">▶➕ Run New Tab</button>
       <button id="hintBtn">💡 Hint</button>
       <button id="sampleBtn">📋 Insert Demo SQL</button>
       <button id="clearMapBtn">🗑 Clear Map</button>
@@ -367,6 +397,7 @@
     </section>
 
     <section id="resultsPane">
+      <div id="resultsTabs" class="tab-bar results-tabs"></div>
       <div id="resultsMeta">No results yet.</div>
       <div id="results">
         <div style="padding:14px; color:var(--muted); font-size:12px;">
@@ -848,6 +879,10 @@ LIMIT 5;`
   let conn = null;
   let currentClue = null;
   let activeTheme = "all";
+  
+  let resultTabs = [];
+  let activeResultTabId = null;
+  let resultTabCounter = 1;
 
   // ---------------------------------------------------------------------------
   // DOM refs
@@ -855,6 +890,7 @@ LIMIT 5;`
   const statusEl       = document.getElementById("status");
   const resultsMetaEl  = document.getElementById("resultsMeta");
   const resultsEl      = document.getElementById("results");
+  const resultsTabsEl  = document.getElementById("resultsTabs");
   const sqlEditor      = document.getElementById("sqlEditor");
   const cluesEl        = document.getElementById("clues");
   const clueTitleEl    = document.getElementById("currentClueTitle");
@@ -1166,43 +1202,176 @@ LIMIT 5;`
   // ---------------------------------------------------------------------------
   // Run SQL
   // ---------------------------------------------------------------------------
-  async function runSql() {
-    if (!conn) {
-      setStatus("Initialize DuckDB first (click ⚡ Init DuckDB).", "err");
-      return;
-    }
-    const sql = sqlEditor.value.trim();
-    // Strip -- line comments and /* block comments */ before checking emptiness,
-    // so SQL that starts with comment lines is still executed correctly.
-    const sqlWithoutComments = sql
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/--[^\n]*/g, "")
-      .trim();
-    if (!sqlWithoutComments) {
-      setStatus("No SQL to run (editor is empty or only comments).", "err");
-      return;
-    }
-    const t0 = performance.now();
-    try {
-      setStatus("Running query…");
-      resultsMetaEl.textContent = "Running…";
-      resultsEl.innerHTML = "";
-      const result = await conn.query(sql);
-      const rows = result.toArray().map(r => r.toJSON());
-      const ms = (performance.now() - t0).toFixed(1);
-      rowsToTable(rows);
-      plotRows(rows);
-      resultsMetaEl.textContent = `${rows.length} row(s) · ${ms} ms`;
-      setStatus(`Query succeeded — ${rows.length} row(s). Click the 📊 Results tab to view.`, "ok");
-      markResultsReady();
-    } catch (err) {
-      console.error("Query error:", err);
-      resultsEl.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12px; white-space:pre-wrap;">${escHtml(err.message)}</div>`;
-      resultsMetaEl.textContent = "Query failed.";
-      setStatus(`Query failed: ${err.message}`, "err");
-      markResultsReady();
-    }
+
+function getRunnableSql() {
+  const selected = sqlEditor.value
+    .slice(sqlEditor.selectionStart, sqlEditor.selectionEnd)
+    .trim();
+
+  return selected || sqlEditor.value.trim();
+}
+
+function getActiveResultTab() {
+  return resultTabs.find(t => t.id === activeResultTabId) || null;
+}
+
+function createResultTab() {
+  const tab = {
+    id: `result-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    title: `Results ${resultTabCounter++}`,
+    rows: [],
+    meta: "Running…",
+    error: null
+  };
+
+  resultTabs.push(tab);
+  activeResultTabId = tab.id;
+  renderResultTabs();
+  return tab;
+}
+
+function getReplacementResultTab() {
+  if (!resultTabs.length) return createResultTab();
+
+  // DBeaver-like simple behavior: normal Run replaces the first result tab.
+  activeResultTabId = resultTabs[0].id;
+  return resultTabs[0];
+}
+
+function renderResultTabs() {
+  resultsTabsEl.innerHTML = "";
+
+  for (const tab of resultTabs) {
+    const btn = document.createElement("button");
+    btn.className = `tab-btn result-tab-btn${tab.id === activeResultTabId ? " active" : ""}`;
+    btn.type = "button";
+
+    const title = document.createElement("span");
+    title.className = "result-tab-title";
+    title.textContent = tab.title;
+
+    const close = document.createElement("span");
+    close.className = "result-tab-close";
+    close.textContent = "×";
+    close.title = "Close result tab";
+
+    btn.addEventListener("click", () => {
+      activeResultTabId = tab.id;
+      renderResultTabs();
+      renderActiveResultTab();
+    });
+
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeResultTab(tab.id);
+    });
+
+    btn.appendChild(title);
+    btn.appendChild(close);
+    resultsTabsEl.appendChild(btn);
   }
+}
+
+function closeResultTab(tabId) {
+  const idx = resultTabs.findIndex(t => t.id === tabId);
+  if (idx < 0) return;
+
+  resultTabs.splice(idx, 1);
+
+  if (activeResultTabId === tabId) {
+    activeResultTabId =
+      resultTabs[idx]?.id ||
+      resultTabs[idx - 1]?.id ||
+      null;
+  }
+
+  renderResultTabs();
+  renderActiveResultTab();
+}
+
+function renderActiveResultTab() {
+  const tab = getActiveResultTab();
+
+  if (!tab) {
+    resultsMetaEl.textContent = "No results yet.";
+    resultsEl.innerHTML = `
+      <div style="padding:14px; color:var(--muted); font-size:12px;">
+        Results will appear here after you run a query.
+      </div>`;
+    return;
+  }
+
+  resultsMetaEl.textContent = tab.meta;
+
+  if (tab.error) {
+    resultsEl.innerHTML = `<div style="padding:12px; color:var(--danger); font-size:12px; white-space:pre-wrap;">${escHtml(tab.error)}</div>`;
+    return;
+  }
+
+  rowsToTable(tab.rows);
+}
+  
+async function runSql({ newTab = false } = {}) {
+  if (!conn) {
+    setStatus("Initialize DuckDB first (click ⚡ Init DuckDB).", "err");
+    return;
+  }
+
+  const sql = getRunnableSql();
+
+  // Strip -- line comments and /* block comments */ before checking emptiness,
+  // so SQL that starts with comment lines is still executed correctly.
+  const sqlWithoutComments = sql
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--[^\n]*/g, "")
+    .trim();
+
+  if (!sqlWithoutComments) {
+    setStatus("No SQL to run (selection/editor is empty or only comments).", "err");
+    return;
+  }
+
+  const targetTab = newTab ? createResultTab() : getReplacementResultTab();
+  targetTab.meta = "Running…";
+  targetTab.rows = [];
+  targetTab.error = null;
+  activeResultTabId = targetTab.id;
+  renderResultTabs();
+  renderActiveResultTab();
+
+  const t0 = performance.now();
+
+  try {
+    setStatus("Running query…");
+
+    const result = await conn.query(sql);
+    const rows = result.toArray().map(r => r.toJSON());
+    const ms = (performance.now() - t0).toFixed(1);
+
+    targetTab.rows = rows;
+    targetTab.error = null;
+    targetTab.meta = `${rows.length} row(s) · ${ms} ms`;
+
+    renderResultTabs();
+    renderActiveResultTab();
+    plotRows(rows);
+
+    setStatus(`Query succeeded — ${rows.length} row(s). Click the 📊 Results tab to view.`, "ok");
+    markResultsReady();
+  } catch (err) {
+    console.error("Query error:", err);
+
+    targetTab.rows = [];
+    targetTab.error = err.message;
+    targetTab.meta = "Query failed.";
+
+    renderResultTabs();
+    renderActiveResultTab();
+
+    setStatus(`Query failed: ${err.message}`, "err");
+    markResultsReady();
+  }
+}
 
   // ---------------------------------------------------------------------------
   // Clue rendering & selection
@@ -1322,8 +1491,8 @@ LIMIT 20;
   // Toolbar event listeners
   // ---------------------------------------------------------------------------
   document.getElementById("initBtn").addEventListener("click", initializeDuckDB);
-  document.getElementById("runBtn").addEventListener("click", runSql);
-  document.getElementById("hintBtn").addEventListener("click", showHint);
+  document.getElementById("runBtn").addEventListener("click", () => runSql({ newTab: false }));
+  document.getElementById("runNewTabBtn").addEventListener("click", () => runSql({ newTab: true }));  document.getElementById("hintBtn").addEventListener("click", showHint);
   document.getElementById("sampleBtn").addEventListener("click", insertStarterSql);
   document.getElementById("clearMapBtn").addEventListener("click", clearMap);
   document.getElementById("bboxSnippetBtn").addEventListener("click", insertBboxTemplate);
