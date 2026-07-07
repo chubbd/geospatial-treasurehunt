@@ -1,6 +1,6 @@
-# Geospatial SQL Treasure Hunt
+# Geospatial SQL Dashboard
 
-A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
+A browser-based geospatial SQL dashboard using **DuckDB-WASM** to query
 [Overture Maps](https://overturemaps.org/) data for **Greater London** — no backend required.
 
 ## Live Demo
@@ -23,7 +23,7 @@ A browser-based geospatial treasure hunt using **DuckDB-WASM** to query
 | **Full polygon geometry** | Buildings materialised with complete polygon footprints for `ST_*` ops |
 | **Spatial SQL** | `ST_Distance`, `ST_Intersects`, `ST_Contains`, `ST_GeomFromText` and more |
 | **Schema inspection** | `DESCRIBE` and row-count queries for every London table |
-| **Theme filter** | Filter clue list by Places / Buildings / Spatial / Schema |
+| **Sidebar guide** | Hideable in-app tutorial with copyable geospatial SQL examples |
 
 ---
 
