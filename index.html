@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Geospatial SQL Treasure Hunt</title>
+  <title>Geospatial SQL Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!--
     ⚠️  IMPORTANT: This app uses SharedArrayBuffer (required by DuckDB-WASM).
@@ -67,14 +67,18 @@
       display: grid;
       grid-template-columns: 390px 1fr;
     }
+    body.sidebar-collapsed {
+      grid-template-columns: 1fr;
+    }
     #sidebar {
       border-right: 1px solid var(--border);
       background: linear-gradient(180deg, var(--panel), var(--panel-2));
       display: flex;
       flex-direction: column;
       min-height: 0;
-      overflow: hidden;
+      overflow-y: auto;
     }
+    body.sidebar-collapsed #sidebar { display: none; }
     #main {
       display: grid;
       grid-template-rows: 52% 48%;
@@ -96,40 +100,6 @@
       line-height: 1.45;
     }
     .small { font-size: 12px; color: var(--muted); }
-    #clues {
-      overflow-y: auto;
-      padding: 8px;
-      gap: 8px;
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-    }
-    .clue {
-      padding: 12px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.02);
-      border-radius: 10px;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-    .clue:hover { border-color: var(--accent); }
-    .clue.active {
-      border-color: var(--accent-2);
-      box-shadow: 0 0 0 1px rgba(251,191,36,.35) inset;
-    }
-    .clue h4 { margin: 0 0 4px 0; font-size: 13px; }
-    .clue p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
-    .clue .theme-tag {
-      display: inline-block;
-      margin-top: 5px;
-      padding: 1px 7px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 600;
-      background: rgba(103,232,249,.12);
-      border: 1px solid rgba(103,232,249,.25);
-      color: var(--accent);
-    }
     #map { width: 100%; height: 100%; }
     #workbench {
       display: flex;
@@ -285,15 +255,6 @@
       border-radius: 5px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
-    .hint {
-      margin-top: 8px;
-      padding: 9px 10px;
-      border-radius: 8px;
-      background: rgba(103,232,249,.08);
-      border: 1px solid rgba(103,232,249,.18);
-      font-size: 12px;
-      color: #c8f6fb;
-    }
     .bbox-box {
       margin-top: 8px;
       padding: 10px;
@@ -313,35 +274,80 @@
       color: #fda4af;
       margin-bottom: 8px;
     }
-    .footer-note {
-      padding: 10px 14px;
-      color: var(--muted);
-      font-size: 11px;
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    #currentClueSection { flex-shrink: 0; }
-    #themeFilter {
+    .guide-actions {
       display: flex;
-      gap: 5px;
+      gap: 8px;
       flex-wrap: wrap;
-      padding: 8px 10px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
+      margin-top: 10px;
     }
-    #themeFilter button {
+    .guide-actions button {
       font-size: 11px;
       padding: 3px 9px;
-      border-radius: 20px;
     }
-    #themeFilter button.active { border-color: var(--accent); background: rgba(103,232,249,.12); }
+    .guide {
+      padding: 12px 14px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .guide h3 {
+      margin: 0 0 6px 0;
+      font-size: 13px;
+      color: var(--accent);
+    }
+    .guide p {
+      margin: 0 0 6px 0;
+      color: var(--muted);
+    }
+    .guide ul {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--muted);
+    }
+    .guide pre {
+      margin: 7px 0 0 0;
+      background: var(--code);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+      color: #dbeafe;
+      white-space: pre;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .guide-example + .guide-example { margin-top: 8px; }
+    .insert-sql-btn { margin-top: 8px; }
+    #sidebarHideBtn, #sidebarShowBtn {
+      border-radius: 8px;
+      font-size: 11px;
+      padding: 5px 9px;
+    }
+    #sidebarShowBtn {
+      position: fixed;
+      left: 10px;
+      top: 10px;
+      z-index: 20;
+      display: none;
+      border-color: rgba(103,232,249,.5);
+      background: rgba(16, 48, 74, .92);
+    }
+    body.sidebar-collapsed #sidebarShowBtn {
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
+<button id="sidebarShowBtn" type="button">☰ Show guide</button>
 
 <aside id="sidebar">
   <div class="section">
-    <div class="title">🗺️ Geospatial SQL Treasure Hunt</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div class="title">🗺️ Geospatial SQL Guide</div>
+      <button id="sidebarHideBtn" type="button">Hide guide</button>
+    </div>
     <div class="warn-box">
       ⚠️ <strong>Serve over HTTP(S)</strong> — GitHub Pages, a local dev server, etc.
       Opening via <code class="inline">file://</code> will fail (SharedArrayBuffer / COOP headers required).
@@ -356,30 +362,173 @@
     </div>
   </div>
 
-  <div class="section" id="currentClueSection">
-    <div style="font-weight:700; margin-bottom:6px; font-size:13px;">Current clue</div>
-    <div id="currentClueTitle" style="font-weight:600;">Select a clue →</div>
-    <div id="currentClueText" class="muted" style="margin-top:4px; font-size:12px;">
-      Pick a clue from the list below.
-    </div>
-    <div id="currentHint" class="hint" style="display:none;"></div>
-  </div>
+  <div class="guide">
+    <section>
+      <h3>Quick start</h3>
+      <p>1) Click <strong>⚡ Init DuckDB</strong> to materialise London tables in memory.</p>
+      <p>2) Write SQL in the editor and run with <strong>▶ Run SQL</strong> (or Ctrl/Cmd+Enter).</p>
+      <p>3) Review rows in <strong>📊 Results</strong>; if latitude/longitude columns are present, points are plotted on the map.</p>
+      <div class="guide-actions">
+        <button class="insert-sql-btn" type="button">Insert quickstart SQL</button>
+      </div>
+      <pre><code>SELECT name, category, lat, lon
+FROM london.places
+WHERE name IS NOT NULL
+LIMIT 20;</code></pre>
+    </section>
 
-  <div id="themeFilter">
-    <span style="font-size:11px; color:var(--muted); align-self:center;">Filter:</span>
-    <button class="active" data-theme="all">All</button>
-    <button data-theme="places">Places</button>
-    <button data-theme="buildings">Buildings</button>
-    <button data-theme="spatial">Spatial</button>
-    <button data-theme="schema">Schema</button>
-  </div>
+    <section>
+      <h3>How the map works</h3>
+      <p>The map only plots query output when your <code class="inline">SELECT</code> includes latitude/longitude columns. Supported names are inferred from:</p>
+      <ul>
+        <li>Latitude: <code class="inline">lat</code>, <code class="inline">latitude</code>, <code class="inline">y</code>, <code class="inline">ylat</code></li>
+        <li>Longitude: <code class="inline">lon</code>, <code class="inline">lng</code>, <code class="inline">longitude</code>, <code class="inline">x</code>, <code class="inline">xlon</code></li>
+      </ul>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert places map SQL</button>
+        <pre><code>SELECT ST_Y(geometry) lat, ST_X(geometry) lon
+FROM london.places
+LIMIT 20;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert buildings map SQL</button>
+        <pre><code>SELECT ST_Y(ST_CENTROID(geometry)) lat, ST_X(ST_CENTROID(geometry)) lon
+FROM london.buildings
+WHERE height IS NOT NULL
+  AND ST_Y(ST_CENTROID(geometry)) BETWEEN 51.490 AND 51.520
+  AND ST_X(ST_CENTROID(geometry)) BETWEEN -0.040 AND 0.010
+ORDER BY height DESC
+LIMIT 20;</code></pre>
+      </div>
+    </section>
 
-  <div id="clues"></div>
+    <section>
+      <h3>Table guide: london.places</h3>
+      <p>Point features for places with names, categories, addresses, and point geometry. Useful for restaurants, museums, amenities, postcode search, nearest-place workflows, and map labeling.</p>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert named places SQL</button>
+        <pre><code>SELECT id, name, category, lat, lon
+FROM london.places
+WHERE name IS NOT NULL
+LIMIT 25;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert category search SQL</button>
+        <pre><code>SELECT name, category, lat, lon
+FROM london.places
+WHERE category ILIKE '%restaurant%'
+   OR category ILIKE '%cafe%'
+   OR category ILIKE '%museum%'
+ORDER BY name
+LIMIT 40;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert address/postcode SQL</button>
+        <pre><code>SELECT
+  p.name,
+  addr.freeform,
+  addr.postcode,
+  p.lat,
+  p.lon
+FROM london.places p
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
+WHERE addr.postcode ILIKE 'EC1%'
+ORDER BY addr.postcode, p.name
+LIMIT 40;</code></pre>
+      </div>
+    </section>
 
-  <div class="footer-note">
-    Tip: click ⚡ <em>Init DuckDB</em> first — it materialises London data into
-    <code class="inline">london.places</code> and <code class="inline">london.buildings</code>
-    (first load ~10–30 s).
+    <section>
+      <h3>Table guide: london.buildings</h3>
+      <p>Building footprints with geometry plus useful attributes like height, floor count, footprint area, and centroid-style lat/lon fields. Great for tallest/large-building analysis and spatial containment/intersection.</p>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert tallest buildings SQL</button>
+        <pre><code>SELECT name, height, num_floors, building_area_m2, lat, lon
+FROM london.buildings
+WHERE height IS NOT NULL
+ORDER BY height DESC
+LIMIT 20;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert Canary Wharf SQL</button>
+        <pre><code>SELECT name, height, num_floors, building_area_m2, lat, lon
+FROM london.buildings
+WHERE height IS NOT NULL
+  AND lat BETWEEN 51.490 AND 51.520
+  AND lon BETWEEN -0.040 AND 0.010
+ORDER BY height DESC
+LIMIT 20;</code></pre>
+      </div>
+    </section>
+
+    <section>
+      <h3>Geospatial SQL examples</h3>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert building area SQL</button>
+        <pre><code>SELECT
+  name,
+  building_area_m2,
+  ST_Area(geometry) AS geometry_area_native_units
+FROM london.buildings
+WHERE name IS NOT NULL
+ORDER BY building_area_m2 DESC NULLS LAST
+LIMIT 20;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert distance SQL</button>
+        <pre><code>SELECT ROUND(
+  ST_Distance(
+    ST_Point(-0.0866, 51.5045),
+    ST_Point(-0.0754, 51.5055)
+  ) * 111320,
+  0
+) AS approx_distance_m;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert within-distance SQL</button>
+        <pre><code>SELECT
+  b.name,
+  ROUND(ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.0984, 51.5138)) * 111320, 0) AS approx_dist_m
+FROM london.buildings b
+WHERE b.lat BETWEEN 51.5048 AND 51.5228
+  AND b.lon BETWEEN -0.1074 AND -0.0894
+  AND ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.0984, 51.5138)) * 111320 <= 1000
+ORDER BY approx_dist_m
+LIMIT 30;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert closest buildings SQL</button>
+        <pre><code>SELECT
+  b.name,
+  b.height,
+  ROUND(ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.1278, 51.5074)) * 111320, 0) AS approx_dist_m
+FROM london.buildings b
+WHERE b.name IS NOT NULL
+ORDER BY approx_dist_m
+LIMIT 15;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert intersects SQL</button>
+        <pre><code>SELECT name, height, building_area_m2
+FROM london.buildings
+WHERE ST_Intersects(
+  geometry,
+  ST_GeomFromText('POLYGON((-0.082 51.513, -0.078 51.513, -0.078 51.516, -0.082 51.516, -0.082 51.513))')
+)
+ORDER BY height DESC NULLS LAST
+LIMIT 20;</code></pre>
+      </div>
+      <div class="guide-example">
+        <button class="insert-sql-btn" type="button">Insert contains SQL</button>
+        <pre><code>SELECT name, height, building_area_m2, lat, lon
+FROM london.buildings
+WHERE ST_Contains(
+  geometry,
+  ST_Point(-0.0984, 51.5138)
+)
+LIMIT 10;</code></pre>
+      </div>
+    </section>
   </div>
 </aside>
 
@@ -391,8 +540,8 @@
       <button id="initBtn" class="warn">⚡ Init DuckDB</button>
       <button id="runBtn" class="primary">▶ Run SQL</button>
       <button id="runNewTabBtn">▶➕ Run New Tab</button>
-      <button id="hintBtn">💡 Hint</button>
-      <button id="sampleBtn">📋 Insert Demo SQL</button>
+      <button id="hintBtn">📚 Toggle Guide</button>
+      <button id="sampleBtn">📋 Insert Quickstart SQL</button>
       <button id="clearMapBtn">🗑 Clear Map</button>
       <button id="bboxSnippetBtn">📐 London Spatial Template</button>
     </div>
@@ -403,7 +552,7 @@
     </div>
     <section id="editorPane" class="tab-active">
       <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first — this materialises London data into memory.
--- Then select a clue and click "📋 Insert Demo SQL".
+-- Use "📋 Insert Quickstart SQL" or sidebar snippets to explore the data.
 -- Tables: london.places · london.buildings
 </textarea>
     </section>
@@ -538,359 +687,19 @@
   //const S3_BUILDINGS = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=buildings/type=building/*.parquet`;
 
   // ---------------------------------------------------------------------------
-  // Clues / demo queries
+  // SQL snippets used by toolbar and guide buttons
   // ---------------------------------------------------------------------------
-  const clues = [
-    // ── Schema inspection ──────────────────────────────────────────────────
-    {
-      id: "schema-overview",
-      theme: "schema",
-      title: "Schema: table overview",
-      text: "See all materialised London tables and their row counts.",
-      hint: "SHOW TABLES lists what's available. COUNT(*) shows sizes.",
-      starterSql: `-- Overview of materialised London tables
-SHOW TABLES;`
-    },
-    {
-      id: "schema-buildings",
-      theme: "schema",
-      title: "Schema: buildings columns",
-      text: "Inspect the london.buildings schema — height, geometry, area and more.",
-      hint: "DESCRIBE shows column names and types without fetching any rows.",
-      starterSql: `-- Inspect london.buildings schema
-DESCRIBE london.buildings;`
-    },
-    {
-      id: "schema-places",
-      theme: "schema",
-      title: "Schema: places columns",
-      text: "Inspect the london.places schema.",
-      hint: "Look for name, category, lat, lon, and geometry columns.",
-      starterSql: `-- Inspect london.places schema
-DESCRIBE london.places;`
-    },
-    {
-      id: "schema-addresses",
-      theme: "schema",
-      title: "Schema: place addresses structure",
-      text: "Inspect how addresses are stored on london.places.",
-      hint: "Look for the addresses column as a list of structs (freeform, locality, postcode, region, country).",
-      starterSql: `-- Inspect london.places schema (addresses is nested)
-DESCRIBE london.places;`
-    },
-    {
-      id: "schema-counts",
-      theme: "schema",
-      title: "Schema: row counts",
-      text: "How many places and buildings are in the London dataset?",
-      hint: "UNION ALL two COUNT(*) queries to see all at once.",
-      starterSql: `-- Row counts for all London tables
-SELECT 'places'    AS tbl, COUNT(*) AS rows FROM london.places
-UNION ALL
-SELECT 'buildings' AS tbl, COUNT(*) AS rows FROM london.buildings;`
-    },
-
-    // ── Places ─────────────────────────────────────────────────────────────
-    {
-      id: "places-warmup",
-      theme: "places",
-      title: "Places: London sample",
-      text: "Find 25 named places in Greater London.",
-      hint: "london.places has name, category, lat, lon.",
-      starterSql: `-- 25 named London places
-SELECT id, name, category, lat, lon
+  const QUICKSTART_SQL = `SELECT name, category, lat, lon
 FROM london.places
 WHERE name IS NOT NULL
-LIMIT 25;`
-    },
-    {
-      id: "places-museums",
-      theme: "places",
-      title: "Places: London museums",
-      text: "Find all museums in London, ordered by distance from (51.500, -0.120).",
-      hint: "Filter category ILIKE '%museum%'. Multiply degree distance × 111320 for approximate metres.",
-      starterSql: `-- London museums ordered by distance from a coordinate
-SELECT name, category, lat, lon,
-  ROUND(
-    SQRT(POWER(lat - 51.500, 2) + POWER(lon - (-0.120), 2)) * 111320
-  , 0) AS approx_dist_m
-FROM london.places
-WHERE category ILIKE '%museum%'
-ORDER BY approx_dist_m
-LIMIT 20;`
-    },
-    {
-      id: "places-food",
-      theme: "places",
-      title: "Places: restaurants & cafes",
-      text: "Find restaurants and cafes in central London near the Strand.",
-      hint: "Filter category + a tight lat/lon bbox around the Strand.",
-      starterSql: `-- Restaurants and cafes near the Strand
-SELECT name, category, lat, lon
-FROM london.places
-WHERE (category ILIKE '%restaurant%'
-    OR category ILIKE '%cafe%'
-    OR category ILIKE '%coffee%')
-  AND lat BETWEEN 51.505 AND 51.515
-  AND lon BETWEEN -0.135 AND -0.100
-ORDER BY name
-LIMIT 30;`
-    },
-    {
-      id: "places-category-counts",
-      theme: "places",
-      title: "Places: top categories in London",
-      text: "Which categories have the most places in London?",
-      hint: "GROUP BY category ORDER BY COUNT(*) DESC.",
-      starterSql: `-- Top place categories in London
-SELECT category, COUNT(*) AS cnt
-FROM london.places
-WHERE category IS NOT NULL
-GROUP BY category
-ORDER BY cnt DESC
-LIMIT 25;`
-    },
-
-    // ── Place addresses (from london.places.addresses) ─────────────────────
-    {
-      id: "addresses-warmup",
-      theme: "places",
-      title: "Places: address sample",
-      text: "Sample 25 London place addresses from the nested addresses column.",
-      hint: "UNNEST london.places.addresses to access freeform, locality, postcode, region, country.",
-      starterSql: `-- 25 London place addresses from london.places.addresses
-SELECT
-  p.id,
-  addr.freeform AS freeform,
-  addr.locality,
-  addr.postcode,
-  addr.region,
-  addr.country,
-  p.lat,
-  p.lon
-FROM london.places p
-CROSS JOIN UNNEST(p.addresses) AS t(addr)
-LIMIT 25;`
-    },
-    {
-      id: "addresses-postcode",
-      theme: "places",
-      title: "Places: EC1 postcode search",
-      text: "Find place addresses in the EC1 London postcode area.",
-      hint: "UNNEST addresses then filter addr.postcode ILIKE 'EC1%'.",
-      starterSql: `-- Place addresses in the EC1 London postcode area
-SELECT
-  addr.freeform AS freeform,
-  addr.locality,
-  addr.postcode,
-  addr.region,
-  addr.country,
-  p.lat,
-  p.lon
-FROM london.places p
-CROSS JOIN UNNEST(p.addresses) AS t(addr)
-WHERE addr.postcode ILIKE 'EC1%'
-ORDER BY addr.postcode, addr.freeform
-LIMIT 40;`
-    },
-    {
-      id: "addresses-postcode-counts",
-      theme: "places",
-      title: "Places: count by postcode district",
-      text: "Which London postcode districts have the most place addresses?",
-      hint: "UNNEST addresses, then use LEFT(addr.postcode, 4) for district prefixes (e.g. SW1A, EC1A).",
-      starterSql: `-- London postcode districts by place-address count
-SELECT
-  LEFT(addr.postcode, 4) AS district,
-  COUNT(*) AS cnt
-FROM london.places p
-CROSS JOIN UNNEST(p.addresses) AS t(addr)
-WHERE addr.postcode IS NOT NULL
-  AND LENGTH(addr.postcode) >= 4
-GROUP BY district
-ORDER BY cnt DESC
-LIMIT 25;`
-    },
-
-    // ── Buildings ──────────────────────────────────────────────────────────
-    {
-      id: "buildings-warmup",
-      theme: "buildings",
-      title: "Buildings: London sample",
-      text: "Sample 25 named buildings with height, floors, and footprint area.",
-      hint: "london.buildings has name, height, num_floors, building_area_m2, lat, lon, and a geometry column for ST_* ops.",
-      starterSql: `-- 25 named London buildings
-SELECT id, name, height, num_floors, building_area_m2, lat, lon
-FROM london.buildings
-WHERE name IS NOT NULL
-LIMIT 25;`
-    },
-    {
-      id: "buildings-tallest",
-      theme: "buildings",
-      title: "Buildings: tallest in London",
-      text: "Find the tallest buildings in London. Can you identify them all?",
-      hint: "ORDER BY height DESC. The Shard is ~310 m.",
-      starterSql: `-- Tallest London buildings
-SELECT name, height, num_floors, building_area_m2, lat, lon
-FROM london.buildings
-WHERE height IS NOT NULL
-ORDER BY height DESC
-LIMIT 20;`
-    },
-    {
-      id: "buildings-canary-wharf",
-      theme: "buildings",
-      title: "Buildings: Canary Wharf towers",
-      text: "Find tall buildings around Canary Wharf (lat ~51.505, lon ~-0.020).",
-      hint: "Apply a tight bbox around Canary Wharf and ORDER BY height DESC.",
-      starterSql: `-- Tall buildings in Canary Wharf
-SELECT name, height, num_floors, building_area_m2, lat, lon
-FROM london.buildings
-WHERE height IS NOT NULL
-  AND lat BETWEEN 51.490 AND 51.520
-  AND lon BETWEEN -0.040 AND 0.010
-ORDER BY height DESC
-LIMIT 20;`
-    },
-    {
-      id: "buildings-large",
-      theme: "buildings",
-      title: "Buildings: largest footprints",
-      text: "Which named London buildings have the largest footprint (building_area_m2)?",
-      hint: "ORDER BY building_area_m2 DESC. Think arenas, terminals, shopping centres.",
-      starterSql: `-- Largest named building footprints in London
-SELECT name, building_area_m2, height, num_floors, lat, lon
-FROM london.buildings
-WHERE building_area_m2 IS NOT NULL
-  AND name IS NOT NULL
-ORDER BY building_area_m2 DESC
-LIMIT 20;`
-    },
-
-    // ── Spatial (Treasure Hunt) ────────────────────────────────────────────
-    {
-      id: "spatial-distance",
-      theme: "spatial",
-      title: "Spatial: distance between landmarks",
-      text: "Calculate the straight-line distance (in metres) between The Shard and Tower Bridge.",
-      hint: "ST_Distance on WGS-84 points gives planar degrees. Multiply × 111320 for an approximate metre value.",
-      starterSql: `-- Approximate straight-line distance between two London landmarks
-SELECT ROUND(
-  ST_Distance(
-    ST_Point(-0.0866, 51.5045),   -- The Shard
-    ST_Point(-0.0754, 51.5055)    -- Tower Bridge
-  ) * 111320,
-  0) AS approx_distance_m;`
-    },
-    {
-      id: "spatial-nearest-place",
-      theme: "spatial",
-      title: "Spatial: nearest places to Big Ben",
-      text: "You are at Big Ben (51.5074, -0.1278). Find the 10 nearest named places.",
-      hint: "ST_Distance(ST_Point(lon, lat), ST_Point(target_lon, target_lat)) × 111320 ≈ metres.",
-      starterSql: `-- 10 nearest named places to Big Ben (51.5074, -0.1278)
-SELECT
-  name, category, lat, lon,
-  ROUND(
-    ST_Distance(
-      ST_Point(lon, lat),
-      ST_Point(-0.1278, 51.5074)
-    ) * 111320,
-    0
-  ) AS approx_dist_m
-FROM london.places
-WHERE name IS NOT NULL
-ORDER BY approx_dist_m
-LIMIT 10;`
-    },
-    {
-      id: "spatial-buildings-near",
-      theme: "spatial",
-      title: "Spatial: buildings near St Paul's",
-      text: "Find buildings within ~200 m of St Paul's Cathedral (51.5138, -0.0984).",
-      hint: "0.002 degrees ≈ 200 m at London's latitude. Use a bbox pre-filter for efficiency, then refine with ST_Distance.",
-      starterSql: `-- Buildings near St Paul's Cathedral (within ~200 m)
-SELECT
-  name, height, building_area_m2,
-  ROUND(
-    ST_Distance(
-      ST_Point(lon, lat),
-      ST_Point(-0.0984, 51.5138)
-    ) * 111320,
-    0
-  ) AS approx_dist_m
-FROM london.buildings
-WHERE lat BETWEEN 51.5118 AND 51.5158
-  AND lon BETWEEN -0.1004 AND -0.0964
-ORDER BY approx_dist_m
-LIMIT 15;`
-    },
-    {
-      id: "spatial-geometry-intersect",
-      theme: "spatial",
-      title: "Spatial: ST_Intersects — find buildings in an area",
-      text: "Use ST_Intersects to find all buildings whose footprint touches a search polygon around The Gherkin.",
-      hint: "ST_Intersects(geometry, envelope) returns true when they share any space. The Gherkin is at (51.5145, -0.0802).",
-      starterSql: `-- Buildings intersecting a search envelope around The Gherkin (30 St Mary Axe)
-SELECT *,
-ST_Y(ST_Centroid(geometry)) AS lat,
-ST_X(ST_Centroid(geometry)) AS lon
-FROM london.buildings
-WHERE ST_Intersects(
-  geometry,
-  ST_GeomFromText('POLYGON((-0.082 51.513, -0.078 51.513, -0.078 51.516, -0.082 51.516, -0.082 51.513))')
-)
-ORDER BY height DESC NULLS LAST
-LIMIT 10;`
-    },
-    {
-      id: "spatial-triangulation",
-      theme: "spatial",
-      title: "Spatial: triangulate a hidden location",
-      text: "A spy is equidistant from The Shard, One Canada Square, and the Tower of London. Which building are they nearest to?",
-      hint: "Midpoint of (-0.0866, 51.5045), (-0.0194, 51.5049), (-0.0761, 51.5081) ≈ (-0.0607, 51.5058). Find the nearest named building.",
-      starterSql: `-- Nearest named building to the triangulated midpoint
--- Equidistant from: Shard (-0.0866,51.5045), One Canada Sq (-0.0194,51.5049), Tower of London (-0.0761,51.5081)
-SELECT
-  name, height, lat, lon,
-  ROUND(
-    ST_Distance(
-      ST_Point(lon, lat),
-      ST_Point(-0.0607, 51.5058)   -- triangulated midpoint
-    ) * 111320,
-    0
-  ) AS approx_dist_m
-FROM london.buildings
-WHERE name IS NOT NULL
-  AND height IS NOT NULL
-ORDER BY approx_dist_m
-LIMIT 10;`
-    },
-    {
-      id: "spatial-contains",
-      theme: "spatial",
-      title: "Spatial: ST_Contains — point-in-building",
-      text: "Which building's footprint contains the coordinates (51.5138, -0.0984) — the entrance to St Paul's?",
-      hint: "ST_Contains(polygon, point) returns true when the polygon fully encloses the point.",
-      starterSql: `-- Which building footprint contains St Paul's entrance coords?
-SELECT name, height, building_area_m2, lat, lon
-FROM london.buildings
-WHERE ST_Contains(
-  geometry,
-  ST_Point(-0.0984, 51.5138)
-)
-LIMIT 5;`
-    },
-  ];
+LIMIT 20;`;
 
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
   let db = null;
   let conn = null;
-  let currentClue = null;
-  let activeTheme = "all";
+  let sidebarCollapsed = false;
   
   let resultTabs = [];
   let activeResultTabId = null;
@@ -904,10 +713,8 @@ LIMIT 5;`
   const resultsEl      = document.getElementById("results");
   const resultsTabsEl  = document.getElementById("resultsTabs");
   const sqlEditor      = document.getElementById("sqlEditor");
-  const cluesEl        = document.getElementById("clues");
-  const clueTitleEl    = document.getElementById("currentClueTitle");
-  const clueTextEl     = document.getElementById("currentClueText");
-  const hintEl         = document.getElementById("currentHint");
+  const sidebarHideBtn = document.getElementById("sidebarHideBtn");
+  const sidebarShowBtn = document.getElementById("sidebarShowBtn");
 
   // ---------------------------------------------------------------------------
   // Map setup
@@ -1405,50 +1212,20 @@ async function runSql({ newTab = false } = {}) {
 }
 
   // ---------------------------------------------------------------------------
-  // Clue rendering & selection
-  // ---------------------------------------------------------------------------
-  function renderClues() {
-    cluesEl.innerHTML = "";
-    const filtered = activeTheme === "all"
-      ? clues
-      : clues.filter(c => c.theme === activeTheme);
-    for (const clue of filtered) {
-      const div = document.createElement("div");
-      div.className = "clue" + (currentClue?.id === clue.id ? " active" : "");
-      div.innerHTML = `<h4>${escHtml(clue.title)}</h4><p>${escHtml(clue.text)}</p>
-        <span class="theme-tag">${escHtml(clue.theme)}</span>`;
-      div.addEventListener("click", () => selectClue(clue));
-      cluesEl.appendChild(div);
-    }
-  }
-
-  function selectClue(clue) {
-    currentClue = clue;
-    clueTitleEl.textContent = clue.title;
-    clueTextEl.textContent  = clue.text;
-    hintEl.style.display    = "none";
-    hintEl.textContent      = "";
-    renderClues();
-  }
-
-  // ---------------------------------------------------------------------------
   // UI actions
   // ---------------------------------------------------------------------------
-  function showHint() {
-    if (!currentClue) {
-      alert("Select a clue first.");
-      return;
-    }
-    hintEl.style.display = "block";
-    hintEl.textContent   = currentClue.hint;
+  function setSidebarCollapsed(collapsed) {
+    sidebarCollapsed = collapsed;
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    sidebarShowBtn.textContent = collapsed ? "☰ Show guide" : "☰ Hide guide";
   }
 
-  function insertStarterSql() {
-    if (!currentClue) {
-      alert("Select a clue first.");
-      return;
-    }
-    sqlEditor.value = currentClue.starterSql;
+  function toggleSidebar() {
+    setSidebarCollapsed(!sidebarCollapsed);
+  }
+
+  function insertQuickstartSql() {
+    sqlEditor.value = QUICKSTART_SQL;
     selectTab("editor");
     sqlEditor.focus();
   }
@@ -1459,12 +1236,12 @@ async function runSql({ newTab = false } = {}) {
 -- All london.* tables are pre-materialised to Greater London — no global filter needed.
 -- Add a tighter spatial filter for a specific area, e.g. Canary Wharf:
 SELECT *,
-ST_Y(geometry) AS lat,
-ST_X(geometry) AS lon,
+ST_Y(ST_CENTROID(geometry)) AS lat,
+ST_X(ST_CENTROID(geometry)) AS lon
 FROM london.buildings
 WHERE height IS NOT NULL
-  AND ST_Y(geometry) BETWEEN 51.490 AND 51.520
-  AND ST_X(geometry) BETWEEN -0.040 AND 0.010
+  AND ST_Y(ST_CENTROID(geometry)) BETWEEN 51.490 AND 51.520
+  AND ST_X(ST_CENTROID(geometry)) BETWEEN -0.040 AND 0.010
 ORDER BY height DESC
 LIMIT 20;
 
@@ -1484,17 +1261,13 @@ LIMIT 20;
     resultsMetaEl.textContent = "Map cleared.";
   }
 
-  // ---------------------------------------------------------------------------
-  // Theme filter buttons
-  // ---------------------------------------------------------------------------
-  document.querySelectorAll("#themeFilter button").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll("#themeFilter button").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      activeTheme = btn.dataset.theme;
-      renderClues();
-    });
-  });
+  function insertGuideExampleSql(btn) {
+    const sql = btn.closest(".guide-example, section")?.querySelector("code")?.textContent;
+    if (!sql) return;
+    sqlEditor.value = sql;
+    selectTab("editor");
+    sqlEditor.focus();
+  }
 
   // ---------------------------------------------------------------------------
   // Tab switching
@@ -1524,10 +1297,15 @@ LIMIT 20;
   document.getElementById("initBtn").addEventListener("click", initializeDuckDB);
   document.getElementById("runBtn").addEventListener("click", () => runSql({ newTab: false }));
   document.getElementById("runNewTabBtn").addEventListener("click", () => runSql({ newTab: true }));
-  document.getElementById("hintBtn").addEventListener("click", showHint);
-  document.getElementById("sampleBtn").addEventListener("click", insertStarterSql);
+  document.getElementById("hintBtn").addEventListener("click", toggleSidebar);
+  document.getElementById("sampleBtn").addEventListener("click", insertQuickstartSql);
   document.getElementById("clearMapBtn").addEventListener("click", clearMap);
   document.getElementById("bboxSnippetBtn").addEventListener("click", insertBboxTemplate);
+  sidebarHideBtn.addEventListener("click", () => setSidebarCollapsed(true));
+  sidebarShowBtn.addEventListener("click", toggleSidebar);
+  document.querySelectorAll(".insert-sql-btn").forEach(btn => {
+    btn.addEventListener("click", () => insertGuideExampleSql(btn));
+  });
 
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => selectTab(btn.dataset.tab));
@@ -1544,9 +1322,7 @@ LIMIT 20;
   // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
-  renderClues();
-  const defaultClue = clues.find(c => c.id === "places-warmup");
-  if (defaultClue) selectClue(defaultClue);
+  setSidebarCollapsed(false);
 </script>
 </body>
 </html>
