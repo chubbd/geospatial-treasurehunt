@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       overture_release:
-        description: "Overture release tag (e.g. 2026-03-18.0)"
+        description: "Overture release tag (e.g. 2026-08-19.0)"
         required: true
-        default: "2026-03-18.0"
+        default: "2026-08-19.0"
 
 permissions:
   contents: write
