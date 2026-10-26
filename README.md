@@ -214,6 +214,32 @@ Run the **Overture Ducklake** workflow manually from the Actions tab:
 2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
 3. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
 
+### Freezing London Parquets locally
+
+After generating and verifying manifests for an available release, install
+`duckdb==1.5.1` in a Python virtual environment and run `freeze_london.py`:
+
+```bash
+python freeze_london.py --release YYYY-MM-DD.N --output /absolute/path/to/new-snapshot
+```
+
+Replace `YYYY-MM-DD.N` with the verified release. The script reads both
+release-specific files from `manifests/` beside the script; use `--manifest-dir`
+to point to a separate copy of those manifests. Copy the manifests as well as the
+script when running outside this checkout.
+
+It applies the dashboard's inclusive London bbox-overlap predicate, retains full
+geometry, excludes `sources`, and writes ZSTD-compressed places and buildings
+Parquets. It prints row counts and sizes and writes `provenance.json` containing
+input URLs, manifest and output SHA-256 checksums, schema, bounds, and export
+settings. These are filtered derivatives, not byte-for-byte input archives.
+
+The output directory must not already exist. Use a location outside this
+repository to avoid accidentally committing large exports. Internet access,
+several GB of RAM, and free disk space for temporary spill files are required;
+DuckDB's 4 GB memory setting does not limit total process memory. Exported
+geometry must be checked with the browser's DuckDB-Wasm version before deployment.
+
 ---
 
 ## Greater London Bounding Box

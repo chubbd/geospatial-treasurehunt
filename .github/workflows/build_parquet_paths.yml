@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       overture_release:
-        description: "Overture release tag (e.g. 2026-08-19.0)"
+        description: "Overture release tag (e.g. 2026-09-23.0)"
         required: true
-        default: "2026-08-19.0"
+        default: "2026-09-23.0"
 
 permissions:
   contents: write
@@ -43,6 +43,7 @@ jobs:
           OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
         run: |
           set -euo pipefail
+          [[ "${OVERTURE_RELEASE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+$ ]]
           mkdir -p manifests
 
           BASE="s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}"
@@ -98,11 +99,72 @@ jobs:
               ) TO '${out}' (HEADER false);
             "
           
+            test -s "${out}"
             echo "    Wrote $(wc -l < "${out}") files"
           }
 
           build_manifest places place
           build_manifest buildings building
+
+      - name: Verify London schemas and spatial queries
+        env:
+          OVERTURE_RELEASE: ${{ github.event.inputs.overture_release }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+
+          release = os.environ["OVERTURE_RELEASE"]
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.\d+", release):
+              raise ValueError("Invalid release")
+          html = pathlib.Path("index.html").read_text()
+          bbox = (
+              "bbox.xmax >= -0.510 AND bbox.xmin <= 0.334 "
+              "AND bbox.ymax >= 51.286 AND bbox.ymin <= 51.692"
+          )
+          sql = ["INSTALL httpfs; LOAD httpfs; INSTALL spatial; LOAD spatial;",
+                 "SET s3_region='us-west-2'; CREATE SCHEMA london;"]
+          for table in ("places", "buildings"):
+              manifest = pathlib.Path(f"manifests/london_{table}_{release}.txt")
+              files = [line.strip() for line in manifest.read_text().splitlines()
+                       if line.strip()]
+              if not files:
+                  raise ValueError(f"Empty manifest: {manifest}")
+              # Exercise the HTML's actual projection, not a separate schema.
+              projection = re.search(
+                  rf"const {table}Select = \(localName\) => `(.*?)`;",
+                  html, re.S
+              ).group(1)
+              for i, source in enumerate(files):
+                  if not source.startswith(
+                      f"s3://overturemaps-us-west-2/release/{release}/"
+                  ) or "'" in source:
+                      raise ValueError("Unexpected manifest URL")
+                  query = projection.replace("${localName}", source).replace(
+                      "${bboxWhere}", bbox
+                  ).replace("${lonExpr}", "(bbox.xmin + bbox.xmax) / 2.0").replace(
+                      "${latExpr}", "(bbox.ymin + bbox.ymax) / 2.0"
+                  )
+                  command = (f"CREATE TABLE london.{table} AS" if i == 0
+                             else f"INSERT INTO london.{table}")
+                  sql.append(f"{command} {query};")
+              sql.append(f"DESCRIBE london.{table};")
+              sql.append(f"SELECT '{table}' AS theme, count(*) FROM london.{table};")
+          sql.extend([
+              "SELECT name, category, lat, lon FROM london.places "
+              "WHERE name IS NOT NULL LIMIT 20;",
+              "SELECT name, height, num_floors, building_area_m2, lat, lon "
+              "FROM london.buildings WHERE height IS NOT NULL "
+              "ORDER BY height DESC LIMIT 20;",
+              "SELECT count(*) FROM london.buildings WHERE ST_Intersects("
+              "geometry, ST_MakeEnvelope(-0.082, 51.513, -0.078, 51.516));",
+          ])
+          subprocess.run(["bin/duckdb", "-bail"], input="\n".join(sql),
+                         text=True, check=True)
+          PY
 
       - name: Commit manifests to repo
         env:
