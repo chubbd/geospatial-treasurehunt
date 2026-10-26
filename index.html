@@ -828,7 +828,16 @@ LIMIT 20;`;
       .map(r => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [+r[lon], +r[lat]] },
-        properties: { ...r, label: r.name || r.freeform || r.id || "" }
+        properties: JSON.parse(
+          JSON.stringify(
+            {
+              ...r,
+              label: r.name || r.freeform || r.building_id || r.id || ""
+            },
+            (_, value) =>
+              typeof value === "bigint" ? value.toString() : value
+          )
+        )
       }));
     const src = map.getSource("qpts");
     if (!src) return;
