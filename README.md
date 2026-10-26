@@ -243,6 +243,22 @@ several GB of RAM, and free disk space for temporary spill files are required;
 DuckDB's 4 GB memory setting does not limit total process memory. Exported
 geometry must be checked with the browser's DuckDB-Wasm version before deployment.
 
+### Freezing with GitHub Actions
+
+Run **Actions → Freeze London Parquets → Run workflow**, select the branch
+containing the script and manifests, and enter `2026-09-23.0` (or another available
+release with committed manifests). The workflow runs the same local exporter;
+it does not require a separate Linux machine.
+
+The run summary reports exact Parquet sizes and row counts. Download its
+`london-snapshot-<run-id>` artifact to obtain both Parquets, `provenance.json`,
+and `SHA256SUMS`. Verify the downloaded files with `sha256sum -c SHA256SUMS`.
+Artifacts expire after **30 days**, so download and retain them elsewhere before
+expiry. This is a measurement/download workflow, not permanent data hosting.
+It does not commit binaries, update the dashboard URLs, deploy Pages, or create a
+GitHub Release. The exported source fields do not include the dashboard's derived
+display aliases; the dashboard adds those during ingestion.
+
 ---
 
 ## Greater London Bounding Box

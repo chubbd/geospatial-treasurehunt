@@ -1,0 +1,90 @@
+name: Freeze London Parquets
+
+on:
+  workflow_dispatch:
+    inputs:
+      overture_release:
+        description: "Available Overture release with committed London manifests"
+        required: true
+        default: "2026-09-23.0"
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OVERTURE_RELEASE: ${{ inputs.overture_release }}
+      SNAPSHOT_DIR: ${{ runner.temp }}/london-snapshot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install DuckDB
+        run: python -m pip install duckdb==1.5.1
+      - name: Export frozen London Parquets
+        run: |
+          set -euo pipefail
+          python freeze_london.py \
+            --release "$OVERTURE_RELEASE" \
+            --output "$SNAPSHOT_DIR"
+      - name: Record sizes and checksums
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["SNAPSHOT_DIR"])
+          provenance = root / "provenance.json"
+          metadata = json.loads(provenance.read_text())
+          metadata["repository"] = os.environ["GITHUB_REPOSITORY"]
+          metadata["commit"] = os.environ["GITHUB_SHA"]
+          metadata["workflow_run"] = (
+              f"{os.environ['GITHUB_SERVER_URL']}/"
+              f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
+              f"{os.environ['GITHUB_RUN_ID']}"
+          )
+          provenance.write_text(json.dumps(metadata, indent=2) + "\n")
+          lines = [
+              f"## London snapshot: {metadata['release']}",
+              "",
+              "| Table | Rows | Bytes | MiB |",
+              "|---|---:|---:|---:|",
+          ]
+          checksums = []
+          for table, item in metadata["tables"].items():
+              lines.append(
+                  f"| {table} | {item['rows']:,} | {item['bytes']:,} | "
+                  f"{item['bytes'] / 1024**2:.2f} |"
+              )
+              checksums.append(f"{item['sha256']}  {item['output']}")
+          (root / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
+          lines.extend([
+              "",
+              "Download the artifact below. It expires after 30 days:",
+              "save a copy before expiry; this is not permanent hosting.",
+              "",
+              "These files are filtered source data, not dashboard tables:",
+              "display aliases are added by the dashboard during ingestion.",
+              "This workflow does not deploy the map or publish a release.",
+          ])
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
+              stream.write(summary)
+          PY
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: london-snapshot-${{ github.run_id }}
+          path: |
+            ${{ env.SNAPSHOT_DIR }}/*.parquet
+            ${{ env.SNAPSHOT_DIR }}/provenance.json
+            ${{ env.SNAPSHOT_DIR }}/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
