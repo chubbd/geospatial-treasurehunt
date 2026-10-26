@@ -581,7 +581,7 @@ LIMIT 10;</code></pre>
   const LONDON = { west: -0.510, south: 51.286, east: 0.334, north: 51.692 };
 
   // Overture release tag — used to construct S3 paths directly from the Overture public bucket.
-  const OVERTURE_RELEASE = "2026-08-19.0";
+  const OVERTURE_RELEASE = "2026-09-23.0";
   // S3 paths for each Overture theme (public bucket, us-west-2).
 
 
@@ -913,20 +913,29 @@ LIMIT 20;`;
     const lonExpr = `(bbox.xmin + bbox.xmax) / 2.0`;
     const latExpr = `(bbox.ymin + bbox.ymax) / 2.0`;
   
-    // --- Places: keep it lean (SELECT * in WASM is expensive)
-    // Use COALESCE(categories.primary, basic_category) because schema differs across releases.
+    // September uses taxonomy.primary rather than categories.primary.
     const placesSelect = (localName) => `
       SELECT
-      * EXCLUDE (sources)      
+        * EXCLUDE (sources),
+        names.primary AS name,
+        COALESCE(taxonomy.primary, basic_category) AS category,
+        ${lonExpr} AS lon,
+        ${latExpr} AS lat
       FROM read_parquet('${localName}')
       WHERE ${bboxWhere}
     `;
   
-    // --- Buildings: exclude heavy sources, add lat/lon
-    // If you truly need all fields, remove EXCLUDE but expect slower ingest.
+    // Footprint area is a bbox approximation, not the polygon's measured area.
     const buildingsSelect = (localName) => `
       SELECT
-        * EXCLUDE (sources)
+        * EXCLUDE (sources),
+        names.primary AS name,
+        ${lonExpr} AS lon,
+        ${latExpr} AS lat,
+        CAST(ROUND(
+          (bbox.xmax - bbox.xmin) * (bbox.ymax - bbox.ymin)
+          * 111320.0 * 111320.0 * COS(RADIANS(${latExpr}))
+        ) AS BIGINT) AS building_area_m2
       FROM read_parquet('${localName}')
       WHERE ${bboxWhere}
     `;
