@@ -64,8 +64,9 @@ On `⚡ Init DuckDB`, the app:
 
 1. Instantiates **DuckDB-WASM** in the browser (EH/SIMD bundle via jsDelivr).
 2. Loads the **`httpfs`** and **`spatial`** extensions (both compiled into the bundle).
-3. Reads the pre-built **UK-filtered Parquet files** from GitHub Releases via `httpfs`,
-   applying a **Greater London bounding box filter** during the read.
+3. Reads release-specific **London manifests**, downloads their original Overture
+   Parquet files in full from S3 over HTTPS, registers them in DuckDB, and applies
+   a **Greater London bounding box filter** during ingestion.
 4. **Materialises** two in-memory DuckDB tables — `london.places`
    and `london.buildings` — for the rest of the session.
 
@@ -83,15 +84,17 @@ fetches, no DuckLake catalog, no version-coupling.
 
 ### Memory budget
 
-Greater London (bbox: W -0.510, S 51.286, E 0.334, N 51.692) is a small slice of the
-UK dataset.  Typical in-session footprints at the 2026-03-18.0 release:
+Greater London (bbox: W -0.510, S 51.286, E 0.334, N 51.692) contains the following
+measured row counts at release `2026-09-23.0`:
 
-| Table | Expected rows | Approx. in-memory |
-|---|---|---|
-| `london.places` | ~100K | ~20 MB |
-| `london.buildings` | ~200K–600K (with polygons) | ~200–400 MB |
+| Table | Rows |
+|---|---|
+| `london.places` | 490,536 |
+| `london.buildings` | 1,978,306 |
 
-Total is well within DuckDB-WASM's practical ~3 GB ceiling.
+Browser memory usage has not been measured for this release. Full-file download
+buffers add to table memory, so native DuckDB success does not guarantee that
+initialization fits within the browser's memory ceiling.
 
 ---
 
@@ -104,9 +107,9 @@ Total is well within DuckDB-WASM's practical ~3 GB ceiling.
 | `name` | VARCHAR | Building name if present |
 | `height` | DOUBLE | Height in metres |
 | `num_floors` | INTEGER | Floor count if present |
-| `building_area_m2` | INTEGER | Bbox-based footprint approximation in m² |
+| `building_area_m2` | BIGINT | Bbox-based footprint approximation in m² |
 | `lat` / `lon` | DOUBLE | Centroid (bbox midpoint) |
-| `xmin`/`ymin`/`xmax`/`ymax` | DOUBLE | Bounding box corners |
+| `bbox` | STRUCT | Bounding box corners: xmin, ymin, xmax, ymax |
 | `geometry` | GEOMETRY | Full polygon/multipolygon for `ST_*` ops |
 
 ### `london.places`
@@ -173,11 +176,12 @@ LIMIT 40;
 index.html               ← entire app (single static file)
   ├─ MapLibre GL         ← map rendering (CDN)
   └─ DuckDB-WASM         ← in-browser SQL engine (CDN / jsDelivr)
-       ├─ httpfs         ← reads UK Parquet files from GitHub Releases
+       ├─ registered files ← full HTTPS downloads selected by manifests
        └─ spatial        ← ST_* functions, GEOMETRY type
 
 .github/workflows/
-  build-overture-ducklake.yml  ← builds UK-filtered Parquet release assets
+  build_parquet_paths.yml      ← generates London manifests and verifies SQL
+  build-overture-ducklake.yml  ← legacy DuckLake catalog builder
   deploy.yml                   ← deploys index.html to GitHub Pages
   duckdbwasmdownload.yml       ← vendors DuckDB-WASM bundle files
 ```
@@ -188,30 +192,29 @@ No build step. No server. No API keys needed.
 
 ## Overture Data Source
 
-UK-filtered Parquet files are pre-built by the **Build UK Overture Parquets** workflow
-and uploaded as GitHub Release assets tagged `overture-uk-{overture_release}`:
+The dashboard selects Overture release `2026-09-23.0`. Its source file inventory is
+stored in:
 
 ```
-https://github.com/chubbd/geospatial-treasurehunt/releases/download/overture-uk-2026-03-18.0/
-  places_uk.parquet
-  buildings_uk.parquet
-  divisions_uk.parquet
-  segments_uk.parquet
+manifests/london_places_2026-09-23.0.txt
+manifests/london_buildings_2026-09-23.0.txt
 ```
 
-At init time, `index.html` reads each Parquet file via `httpfs` with a London bbox
-filter and materialises only the London subset into in-memory DuckDB tables.
+At init time, `index.html` converts these S3 paths to HTTPS URLs and downloads each
+whole source object. The bbox filter reduces materialized rows, not download size.
+September's `names.primary` and `taxonomy.primary` fields are exposed as `name`
+and `category`; plotting coordinates use bbox midpoints. Original columns other
+than `sources` remain available.
 
-**Why Hilbert re-sort?**  The pre-built Parquet files are Hilbert-sorted against the UK
-extent so that DuckDB can skip row groups outside the London bbox efficiently — only the
-London rows need to be fetched from the remote file.
+Upstream release files can expire. Manifests alone do not preserve their bytes;
+use the local freeze exporter below before the selected release is removed.
 
 ### Rebuilding the data
 
-Run the **Overture Ducklake** workflow manually from the Actions tab:
+Run the **Build London Parquet manifests (Overture)** workflow from Actions:
 
-1. Go to **Actions → Overture Ducklake → Run workflow**.
-2. Enter the new Overture release tag (e.g. `2026-04-15.0`).
+1. Select the branch to update.
+2. Enter an available Overture release tag (e.g. `2026-09-23.0`).
 3. Update `OVERTURE_RELEASE` in `index.html` to the new tag.
 
 ### Freezing London Parquets locally
