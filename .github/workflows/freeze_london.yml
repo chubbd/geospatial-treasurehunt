@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 60
     env:
       OVERTURE_RELEASE: ${{ inputs.overture_release }}
-      SNAPSHOT_DIR: ${{ runner.temp }}/london-snapshot
+      SNAPSHOT_DIR: /tmp/london-snapshot
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
