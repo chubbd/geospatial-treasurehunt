@@ -1,10 +1,11 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Geospatial SQL Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!--
+<meta charset="utf-8"/>
+<title>Geospatial SQL Dashboard</title>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<!--
     ⚠️  IMPORTANT: This app uses SharedArrayBuffer (required by DuckDB-WASM).
         It MUST be served over HTTP(S) — e.g. GitHub Pages — NOT opened via file://.
         Opening via file:// will fail with cross-origin isolation errors.
@@ -12,7 +13,7 @@
         crossOriginIsolated=true and SharedArrayBuffer is available even on
         GitHub Pages (which does not serve those headers natively).
   -->
-  <script>
+<script>
     // Register the COI service worker on first load; reload once it is active
     // so that the page runs with Cross-Origin isolation from the start.
     if ("serviceWorker" in navigator) {
@@ -33,17 +34,15 @@
         .catch(console.error);
     }
   </script>
-  
-  <script type="importmap">
+<script type="importmap">
   {
     "imports": {
       "apache-arrow": "https://cdn.jsdelivr.net/npm/apache-arrow@11.0.0/+esm"
     }
   }
   </script>
-
-  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" crossorigin="anonymous" />
-  <style>
+<link crossorigin="anonymous" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
+<style>
     :root {
       --bg: #0b1220;
       --panel: #121a2b;
@@ -337,22 +336,28 @@
     body.sidebar-collapsed #sidebarShowBtn {
       display: inline-block;
     }
-  </style>
+  
+body{grid-template-columns:var(--sidebar-width,390px) 8px minmax(0,1fr)}
+#main,#sidebar{min-width:0}#sidebarResize{background:var(--border);cursor:col-resize;touch-action:none}
+#sidebarResize:hover,#sidebarResize:focus-visible{background:var(--accent)}
+body.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}body.sidebar-collapsed #sidebarResize{display:none}
+.guide summary{cursor:pointer;color:var(--accent);font-weight:600}.guide details{padding:10px 0;border-top:1px solid var(--border)}
+#schemaDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;width:min(900px,95vw);max-height:85vh;overflow:auto;padding:20px}#schemaDialog::backdrop{background:#0009}#schemaLive{overflow:auto}
+</style>
 </head>
 <body>
 <button id="sidebarShowBtn" type="button">☰ Show guide</button>
-
 <aside id="sidebar">
-  <div class="section">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-      <div class="title">🗺️ Geospatial SQL Guide</div>
-      <button id="sidebarHideBtn" type="button">Hide guide</button>
-    </div>
-    <div class="warn-box">
+<div class="section">
+<div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+<div class="title">🗺️ Geospatial SQL Guide</div>
+<button id="sidebarHideBtn" type="button">Hide guide</button>
+</div>
+<div class="warn-box">
       ⚠️ <strong>Serve over HTTP(S)</strong> — GitHub Pages, a local dev server, etc.
       Opening via <code class="inline">file://</code> will fail (SharedArrayBuffer / COOP headers required).
     </div>
-    <div class="muted">
+<div class="muted">
       Query <strong>Greater London</strong> data from <strong>Overture Maps</strong>,
       materialised once per session into in-memory <strong>DuckDB-WASM</strong> —
       no backend needed. Full spatial SQL:
@@ -360,216 +365,184 @@
       <code class="inline">ST_Intersects</code>,
       <code class="inline">ST_Contains</code> and more.
     </div>
-  </div>
-
-  <div class="guide">
-    <section>
-      <h3>Quick start</h3>
-      <p>1) Click <strong>⚡ Init DuckDB</strong> to materialise London tables in memory.</p>
-      <p>2) Write SQL in the editor and run with <strong>▶ Run SQL</strong> (or Ctrl/Cmd+Enter).</p>
-      <p>3) Review rows in <strong>📊 Results</strong>; if latitude/longitude columns are present, points are plotted on the map.</p>
-      <div class="guide-actions">
-        <button class="insert-sql-btn" type="button">Insert quickstart SQL</button>
-      </div>
-      <pre><code>SELECT name, category, lat, lon
+</div>
+<div class="guide"><section><h3>Start in two minutes</h3><p>Initialise DuckDB, insert an example, then run it. Include lat and lon for map dots and name for labels. Run New Tab keeps earlier results; selecting a result tab changes the map.</p><p>Places are businesses and amenities represented by points. Buildings are physical footprint polygons. Their IDs are separate. The dashboard adds name, category and bbox-centre lat/lon aliases.</p><p>Comments explain what each step does and why. Change the example search terms to investigate your own clues. Highlighted text runs alone; clear the selection to run the whole query.</p></section><details class="guide-example"><summary>First query</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Select only useful fields so the table and map popup stay readable.
+-- name labels dots; lat/lon locate them. id identifies the source record.
+SELECT id, name, category, lat, lon
 FROM london.places
+-- Missing names are NULL; exclude them for this first named-place preview.
 WHERE name IS NOT NULL
-LIMIT 20;</code></pre>
-    </section>
-
-    <section>
-      <h3>How the map works</h3>
-      <p>The map only plots query output when your <code class="inline">SELECT</code> includes latitude/longitude columns. Supported names are inferred from:</p>
-      <ul>
-        <li>Latitude: <code class="inline">lat</code>, <code class="inline">latitude</code>, <code class="inline">y</code>, <code class="inline">ylat</code></li>
-        <li>Longitude: <code class="inline">lon</code>, <code class="inline">lng</code>, <code class="inline">longitude</code>, <code class="inline">x</code>, <code class="inline">xlon</code></li>
-      </ul>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert places map SQL</button>
-        <pre><code>SELECT ST_Y(geometry) lat, ST_X(geometry) lon
+-- Without ORDER BY these are any 20 matches, not a ranking.
+LIMIT 20;</code></pre></details><details class="guide-example"><summary>Search places by category</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Category describes WHAT a place is, rather than words in its name.
+-- Replace coffee_shop with restaurant, museum, or another category.
+SELECT id, name, category, lat, lon
 FROM london.places
-LIMIT 20;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert buildings map SQL</button>
-        <pre><code>SELECT ST_Y(ST_CENTROID(geometry)) lat, ST_X(ST_CENTROID(geometry)) lon
-FROM london.buildings
-WHERE height IS NOT NULL
-  AND ST_Y(ST_CENTROID(geometry)) BETWEEN 51.490 AND 51.520
-  AND ST_X(ST_CENTROID(geometry)) BETWEEN -0.040 AND 0.010
-ORDER BY height DESC
-LIMIT 20;</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <h3>Table guide: london.places</h3>
-      <p>Point features for places with names, categories, addresses, and point geometry. Useful for restaurants, museums, amenities, postcode search, nearest-place workflows, and map labeling.</p>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert named places SQL</button>
-        <pre><code>SELECT id, name, category, lat, lon
+-- hierarchy is a list from broad to specific classifications.
+-- Search the list to include more specific descendants too.
+WHERE list_contains(taxonomy.hierarchy, 'coffee_shop')
+-- Alphabetical ordering makes the preview easier to browse.
+ORDER BY name NULLS LAST, id
+LIMIT 30;</code></pre></details><details class="guide-example"><summary>Search places by name</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- name is the dashboard alias for the original names.primary field.
+SELECT id, name, category, lat, lon
 FROM london.places
-WHERE name IS NOT NULL
-LIMIT 25;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert category search SQL</button>
-        <pre><code>SELECT name, category, lat, lon
-FROM london.places
-WHERE category ILIKE '%restaurant%'
-   OR category ILIKE '%cafe%'
-   OR category ILIKE '%museum%'
-ORDER BY name
-LIMIT 40;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert address/postcode SQL</button>
-        <pre><code>SELECT
-  p.name,
-  addr.freeform,
-  addr.postcode,
-  p.lat,
-  p.lon
+-- ILIKE ignores case; % matches any number of characters.
+-- '%coffee%' matches anywhere; 'coffee%' matches only the start.
+-- Use name = 'Example Cafe' for an exact, case-sensitive match.
+WHERE name ILIKE '%coffee%'
+ORDER BY name, id
+-- A preview, not necessarily every match.
+LIMIT 30;</code></pre></details><details class="guide-example"><summary>Search places by address</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- A place can have several addresses stored as a list of structs.
+-- p aliases the place table; addr represents one address record.
+SELECT p.id, p.name, addr.freeform, addr.postcode, p.lat, p.lon
+FROM london.places p
+-- Expand the list into one row per address, not just the first address.
+-- Places with several addresses can repeat; empty address lists disappear.
+CROSS JOIN UNNEST(p.addresses) AS t(addr)
+-- Search recorded freeform text; % permits text before/after the street.
+WHERE addr.freeform ILIKE '%High Street%'
+ORDER BY p.name, addr.postcode, p.id
+LIMIT 30;
+-- Address coverage varies. No match does not prove the place is absent.
+-- Try a postcode or name search if freeform is missing.</code></pre></details><details class="guide-example"><summary>Search places by postcode</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Expand all addresses so every recorded postcode can be searched.
+SELECT p.id, p.name, addr.freeform, addr.postcode, p.lat, p.lon
 FROM london.places p
 CROSS JOIN UNNEST(p.addresses) AS t(addr)
+-- EC1% means starts with EC1; % is a wildcard and ILIKE ignores case.
+-- Use equality instead for an exact full postcode.
 WHERE addr.postcode ILIKE 'EC1%'
-ORDER BY addr.postcode, p.name
-LIMIT 40;</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <h3>Table guide: london.buildings</h3>
-      <p>Building footprints with geometry plus useful attributes like height, floor count, footprint area, and centroid-style lat/lon fields. Great for tallest/large-building analysis and spatial containment/intersection.</p>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert tallest buildings SQL</button>
-        <pre><code>SELECT name, height, num_floors, building_area_m2, lat, lon
+ORDER BY addr.postcode, p.name, p.id
+LIMIT 30;
+-- Several addresses can produce several rows for the same place.</code></pre></details><details class="guide-example"><summary>Filter buildings</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Buildings are footprints, not businesses from the places table.
+SELECT id, COALESCE(name, 'Building') AS name,
+       height, num_floors, subtype, lat, lon
 FROM london.buildings
-WHERE height IS NOT NULL
-ORDER BY height DESC
-LIMIT 20;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert Canary Wharf SQL</button>
-        <pre><code>SELECT name, height, num_floors, building_area_m2, lat, lon
+-- AND requires both clues. Unknown (NULL) floor counts do not match 8.
+WHERE subtype = 'residential' AND num_floors = 8
+ORDER BY id
+LIMIT 30;
+-- COALESCE supplies a label when name is missing.
+-- lat/lon are bbox centres for plotting, not footprint edges.</code></pre></details><details class="guide-example"><summary>Distance between points</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Ellipsoidal point-to-point distance in metres.
+-- Spheroid functions expect LATITUDE, LONGITUDE, unlike ST_Point(lon,lat).
+SELECT round(ST_Distance_Spheroid(
+    ST_Point2D(51.5045, -0.0866),
+    ST_Point2D(51.5055, -0.0754)
+), 1) AS distance_m;
+-- round changes display precision only.
+-- No lat/lon columns are returned, so this is a number rather than map dots.</code></pre></details><details class="guide-example"><summary>Places within 1 km</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Find place points within 1000 metres of the specified point.
+SELECT id, name, category, lat, lon,
+       round(ST_Distance_Spheroid(ST_Point2D(lat, lon),
+           ST_Point2D(51.5138, -0.0984)), 1) AS distance_m
+FROM london.places
+-- Generous rectangular prefilter reduces candidate points.
+-- These bounds are for THIS target; update them when moving the target.
+WHERE lat BETWEEN 51.5038 AND 51.5238
+  AND lon BETWEEN -0.1154 AND -0.0814
+  -- Actual ellipsoidal radius test, not a rectangle or rounded distance.
+  AND ST_DWithin_Spheroid(ST_Point2D(lat, lon),
+      ST_Point2D(51.5138, -0.0984), 1000)
+-- Rank by unrounded distance to avoid rounding ties changing the order.
+ORDER BY ST_Distance_Spheroid(ST_Point2D(lat, lon),
+    ST_Point2D(51.5138, -0.0984)), id
+LIMIT 30;</code></pre></details><details class="guide-example"><summary>Closest building centres</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- This ranks representative CENTRES, not the nearest footprint edge.
+SELECT id, COALESCE(name, 'Building') AS name, lat, lon,
+       round(ST_Distance_Spheroid(ST_Point2D(lat, lon),
+           ST_Point2D(51.5074, -0.1278)), 1) AS distance_m
 FROM london.buildings
-WHERE height IS NOT NULL
-  AND lat BETWEEN 51.490 AND 51.520
-  AND lon BETWEEN -0.040 AND 0.010
-ORDER BY height DESC
-LIMIT 20;</code></pre>
-      </div>
-    </section>
-
-    <section>
-      <h3>Geospatial SQL examples</h3>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert building area SQL</button>
-        <pre><code>SELECT
-  name,
-  building_area_m2,
-  ST_Area(geometry) AS geometry_area_native_units
-FROM london.buildings
-WHERE name IS NOT NULL
-ORDER BY building_area_m2 DESC NULLS LAST
-LIMIT 20;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert distance SQL</button>
-        <pre><code>SELECT ROUND(
-  ST_Distance(
-    ST_Point(-0.0866, 51.5045),
-    ST_Point(-0.0754, 51.5055)
-  ) * 111320,
-  0
-) AS approx_distance_m;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert within-distance SQL</button>
-        <pre><code>SELECT
-  b.name,
-  ROUND(ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.0984, 51.5138)) * 111320, 0) AS approx_dist_m
-FROM london.buildings b
-WHERE b.lat BETWEEN 51.5048 AND 51.5228
-  AND b.lon BETWEEN -0.1074 AND -0.0894
-  AND ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.0984, 51.5138)) * 111320 <= 1000
-ORDER BY approx_dist_m
-LIMIT 30;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert closest buildings SQL</button>
-        <pre><code>SELECT
-  b.name,
-  b.height,
-  ROUND(ST_Distance(ST_Point(b.lon, b.lat), ST_Point(-0.1278, 51.5074)) * 111320, 0) AS approx_dist_m
-FROM london.buildings b
-WHERE b.name IS NOT NULL
-ORDER BY approx_dist_m
-LIMIT 15;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert intersects SQL</button>
-        <pre><code>SELECT name, height, building_area_m2
-FROM london.buildings
-WHERE ST_Intersects(
-  geometry,
-  ST_GeomFromText('POLYGON((-0.082 51.513, -0.078 51.513, -0.078 51.516, -0.082 51.516, -0.082 51.513))')
+-- Only known coordinates can be compared.
+WHERE lat IS NOT NULL AND lon IS NOT NULL
+-- Sort before LIMIT so these are the closest 15, not any 15.
+ORDER BY ST_Distance_Spheroid(ST_Point2D(lat, lon),
+    ST_Point2D(51.5074, -0.1278)), id
+LIMIT 15;
+-- Ranking all London buildings can be slower than a local search.
+-- Use the footprint example if ANY PART of a building must be in range.</code></pre></details><details class="guide-example"><summary>Footprint within 500 m</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Question: is ANY PART of a building within 500 m of this point?
+-- Using its centre instead would answer a different question.
+WITH target AS (
+    -- Ordinary ST_Point uses LONGITUDE, LATITUDE.
+    -- WGS84 is in degrees; project to British National Grid for metres.
+    -- always_xy preserves the longitude/latitude input order.
+    SELECT ST_Transform(ST_Point(-0.0984, 51.5138),
+        'EPSG:4326', 'EPSG:27700', always_xy := true) AS geom_m
+), buildings AS (
+    -- WITH names intermediate queries so each step is easier to follow.
+    -- Both geometries must use the SAME projected coordinate system.
+    SELECT id, name, lat, lon, ST_Transform(geometry,
+        'EPSG:4326', 'EPSG:27700', always_xy := true) AS geom_m
+    FROM london.buildings
+    -- Cheap rectangular prefilter before the polygon-distance test.
+    -- Compare bbox EDGES so crossing footprints are not excluded.
+    -- Update this generous envelope if you change the target/radius.
+    WHERE bbox.xmax &gt;= -0.1104 AND bbox.xmin &lt;= -0.0864
+      AND bbox.ymax &gt;= 51.5068 AND bbox.ymin &lt;= 51.5208
 )
-ORDER BY height DESC NULLS LAST
-LIMIT 20;</code></pre>
-      </div>
-      <div class="guide-example">
-        <button class="insert-sql-btn" type="button">Insert contains SQL</button>
-        <pre><code>SELECT name, height, building_area_m2, lat, lon
+SELECT b.id, COALESCE(b.name, 'Building') AS name, b.lat, b.lon,
+       -- Distance is to the nearest footprint part; zero if point is inside.
+       round(ST_Distance(b.geom_m, t.geom_m), 1) AS distance_m
+FROM buildings b
+-- target has ONE row; pair each building with that one target point.
+CROSS JOIN target t
+-- Actual 500 m test uses unrounded distances in projected metres.
+WHERE ST_DWithin(b.geom_m, t.geom_m, 500)
+ORDER BY ST_Distance(b.geom_m, t.geom_m), b.id
+LIMIT 30;
+-- Map dots use centres even though filtering uses footprint edges.
+-- Spherical/spheroidal functions take points, not building polygons.
+-- Keep geometry inside calculations; return readable map properties.</code></pre></details><details class="guide-example"><summary>Measured footprint area</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Measure the polygon, not the dashboard's approximate bbox area.
+SELECT id, COALESCE(name, 'Building') AS name, lat, lon,
+       -- Project to metres before measuring: area then uses square metres.
+       round(ST_Area(ST_Transform(geometry,
+           'EPSG:4326', 'EPSG:27700', always_xy := true
+       )), 1) AS footprint_area_m2
 FROM london.buildings
-WHERE ST_Contains(
-  geometry,
-  ST_Point(-0.0984, 51.5138)
-)
-LIMIT 10;</code></pre>
-      </div>
-    </section>
-  </div>
-</aside>
-
+-- Narrow candidates before expensive polygon calculations.
+WHERE subtype = 'residential' AND num_floors = 8
+ORDER BY id
+LIMIT 30;
+-- External footprint area is not total floor area or internal usable space.</code></pre></details><details class="guide-example"><summary>Building contains a point</summary><button class="insert-sql-btn" type="button">Insert SQL</button><pre><code>-- Find footprints whose INTERIOR contains the supplied point.
+SELECT id, COALESCE(name, 'Building') AS name, lat, lon
+FROM london.buildings
+-- Both inputs are WGS84. This tests topology, not metre distances.
+WHERE ST_Contains(geometry, ST_Point(-0.0984, 51.5138))
+ORDER BY id
+LIMIT 10;
+-- A point exactly on the boundary does not pass ST_Contains.
+-- Use ST_Intersects instead if boundary points should count.</code></pre></details></div>
+</aside><div aria-label="Resize sidebar" aria-orientation="vertical" id="sidebarResize" role="separator" tabindex="0"></div>
 <main id="main">
-  <div id="map"></div>
-
-  <div id="workbench">
-    <div class="toolbar">
-      <button id="initBtn" class="warn">⚡ Init DuckDB</button>
-      <button id="runBtn" class="primary">▶ Run SQL</button>
-      <button id="runNewTabBtn">▶➕ Run New Tab</button>
-      <button id="hintBtn">📚 Toggle Guide</button>
-      <button id="sampleBtn">📋 Insert Quickstart SQL</button>
-      <button id="clearMapBtn">🗑 Clear Map</button>
-      <button id="bboxSnippetBtn">📐 London Spatial Template</button>
-    </div>
-    <div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
-    <div class="tab-bar">
-      <button class="tab-btn active" id="tabSql" data-tab="editor">✏️ Query</button>
-      <button class="tab-btn" id="tabResults" data-tab="results">📊 Results</button>
-    </div>
-    <section id="editorPane" class="tab-active">
-      <textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first — this materialises London data into memory.
+<div id="map"></div>
+<div id="workbench">
+<div class="toolbar">
+<button class="warn" id="initBtn">⚡ Init DuckDB</button>
+<button class="primary" id="runBtn">▶ Run SQL</button>
+<button id="runNewTabBtn">▶➕ Run New Tab</button>
+<button id="hintBtn">📚 Toggle Guide</button>
+<button id="sampleBtn">📋 Insert Quickstart SQL</button>
+<button id="clearMapBtn">🗑 Clear Map</button>
+<button id="bboxSnippetBtn">📐 London Spatial Template</button>
+<button id="schemaOpen" type="button">Tables &amp; schema</button></div>
+<div id="status">Not initialized. Click ⚡ Init DuckDB to start.</div>
+<div class="tab-bar">
+<button class="tab-btn active" data-tab="editor" id="tabSql">✏️ Query</button>
+<button class="tab-btn" data-tab="results" id="tabResults">📊 Results</button>
+</div>
+<section class="tab-active" id="editorPane">
+<textarea id="sqlEditor" spellcheck="false">-- Click "⚡ Init DuckDB" first — this materialises London data into memory.
 -- Use "📋 Insert Quickstart SQL" or sidebar snippets to explore the data.
 -- Tables: london.places · london.buildings
 </textarea>
-    </section>
-
-    <section id="resultsPane">
-      <div id="resultsTabs" class="tab-bar results-tabs" role="tablist" aria-label="SQL result tabs"></div>
-      <div id="resultsMeta">No results yet.</div>
-      <div id="results" role="tabpanel">
-        <div style="padding:14px; color:var(--muted); font-size:12px;">
+</section>
+<section id="resultsPane">
+<div aria-label="SQL result tabs" class="tab-bar results-tabs" id="resultsTabs" role="tablist"></div>
+<div id="resultsMeta">No results yet.</div>
+<div id="results" role="tabpanel">
+<div style="padding:14px; color:var(--muted); font-size:12px;">
           Results will appear here after you run a query.
         </div>
-      </div>
-    </section>
-  </div>
+</div>
+</section>
+</div>
 </main>
-
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin="anonymous"></script>
+<script crossorigin="anonymous" src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script type="module">
   //import * as duckdb from "https://unpkg.com/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-wasm-eh.js"
   import * as duckdb from "./duckdb/duckdb-browser.mjs";
@@ -689,9 +662,13 @@ LIMIT 10;</code></pre>
   // ---------------------------------------------------------------------------
   // SQL snippets used by toolbar and guide buttons
   // ---------------------------------------------------------------------------
-  const QUICKSTART_SQL = `SELECT name, category, lat, lon
+  const QUICKSTART_SQL = `-- Select only useful fields so the table and map popup stay readable.
+-- name labels dots; lat/lon locate them. id identifies the source record.
+SELECT id, name, category, lat, lon
 FROM london.places
+-- Missing names are NULL; exclude them for this first named-place preview.
 WHERE name IS NOT NULL
+-- Without ORDER BY these are any 20 matches, not a ranking.
 LIMIT 20;`;
 
   // ---------------------------------------------------------------------------
@@ -819,25 +796,16 @@ LIMIT 20;`;
   }
 
   function plotRows(rows) {
-    if (!rows || !rows.length) return;
+    if (!rows || !rows.length) { clearMap(); return; }
     const cols = Object.keys(rows[0]);
     const { lat, lon } = inferLatLon(cols);
-    if (!lat || !lon) return;
+    if (!lat || !lon) { clearMap(); return; }
     const features = rows
       .filter(r => Number.isFinite(+r[lat]) && Number.isFinite(+r[lon]))
       .map(r => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [+r[lon], +r[lat]] },
-        properties: JSON.parse(
-          JSON.stringify(
-            {
-              ...r,
-              label: r.name || r.freeform || r.building_id || r.id || ""
-            },
-            (_, value) =>
-              typeof value === "bigint" ? value.toString() : value
-          )
-        )
+        properties: JSON.parse(JSON.stringify({ ...r, label: r.name || r.site_name || r.building_id || r.id || "" }, (_, v) => typeof v === "bigint" ? v.toString() : v))
       }));
     const src = map.getSource("qpts");
     if (!src) return;
@@ -1145,6 +1113,7 @@ function closeResultTab(tabId) {
 
 function renderActiveResultTab() {
   const tab = getActiveResultTab();
+  plotRows(tab && !tab.error ? tab.rows : []);
 
   if (!tab) {
     resultsMetaEl.textContent = "No results yet.";
@@ -1210,7 +1179,7 @@ async function runSql({ newTab = false } = {}) {
 
     renderResultTabs();
     renderActiveResultTab();
-    plotRows(rows);
+
 
     setStatus(`Query succeeded — ${rows.length} row(s). Click the 📊 Results tab to view.`, "ok");
     markResultsReady();
@@ -1235,6 +1204,7 @@ async function runSql({ newTab = false } = {}) {
   function setSidebarCollapsed(collapsed) {
     sidebarCollapsed = collapsed;
     document.body.classList.toggle("sidebar-collapsed", collapsed);
+    requestAnimationFrame(() => map.resize());
     sidebarShowBtn.textContent = collapsed ? "☰ Show guide" : "☰ Hide guide";
   }
 
@@ -1249,29 +1219,16 @@ async function runSql({ newTab = false } = {}) {
   }
 
   function insertBboxTemplate() {
-    sqlEditor.value =
-`-- Greater London bbox: west=-0.510, south=51.286, east=0.334, north=51.692
--- All london.* tables are pre-materialised to Greater London — no global filter needed.
--- Add a tighter spatial filter for a specific area, e.g. Canary Wharf:
-SELECT *,
-ST_Y(ST_CENTROID(geometry)) AS lat,
-ST_X(ST_CENTROID(geometry)) AS lon
+    sqlEditor.value = `-- Tables already contain Greater London data.
+-- Use the existing bbox-centre lat/lon columns for a map preview.
+SELECT id, COALESCE(name, 'Building') AS name, height, lat, lon
 FROM london.buildings
-WHERE height IS NOT NULL
-  AND ST_Y(ST_CENTROID(geometry)) BETWEEN 51.490 AND 51.520
-  AND ST_X(ST_CENTROID(geometry)) BETWEEN -0.040 AND 0.010
-ORDER BY height DESC
-LIMIT 20;
-
--- Spatial functions (require spatial extension, loaded automatically):
--- ST_Distance(ST_Point(lon1, lat1), ST_Point(lon2, lat2)) * 111320 ≈ metres
--- ST_Intersects(a.geometry, b.geometry)
--- ST_Contains(polygon.geometry, ST_Point(lon, lat))
--- ST_GeomFromText('POLYGON((lon1 lat1, lon2 lat2, ...))')`;
-    selectTab("editor");
-    sqlEditor.focus();
+WHERE lat BETWEEN 51.490 AND 51.520
+  AND lon BETWEEN -0.040 AND 0.010
+ORDER BY height DESC NULLS LAST
+LIMIT 20;`;
+    selectTab("editor"); sqlEditor.focus();
   }
-
   function clearMap() {
     const src = map.getSource("qpts");
     if (src) src.setData({ type: "FeatureCollection", features: [] });
@@ -1325,7 +1282,7 @@ LIMIT 20;
     btn.addEventListener("click", () => insertGuideExampleSql(btn));
   });
 
-  document.querySelectorAll(".tab-btn").forEach(btn => {
+  document.querySelectorAll(".tab-btn[data-tab]").forEach(btn => {
     btn.addEventListener("click", () => selectTab(btn.dataset.tab));
   });
 
@@ -1341,6 +1298,21 @@ LIMIT 20;
   // Boot
   // ---------------------------------------------------------------------------
   setSidebarCollapsed(false);
+
+const resizeHandle=document.getElementById("sidebarResize");
+let guideWidth=390;
+function resizeGuide(width){guideWidth=Math.max(240,Math.min(700,window.innerWidth-320,width));document.body.style.setProperty("--sidebar-width",guideWidth+"px");map.resize();}
+resizeHandle.addEventListener("pointerdown",e=>{if(e.button!==0)return;e.preventDefault();resizeHandle.setPointerCapture(e.pointerId);});
+resizeHandle.addEventListener("pointermove",e=>{if(resizeHandle.hasPointerCapture(e.pointerId))resizeGuide(e.clientX);});
+resizeHandle.addEventListener("pointerup",e=>{if(resizeHandle.hasPointerCapture(e.pointerId))resizeHandle.releasePointerCapture(e.pointerId);});
+resizeHandle.addEventListener("keydown",e=>{if(e.key==="ArrowLeft"||e.key==="ArrowRight"){e.preventDefault();resizeGuide(guideWidth+(e.key==="ArrowRight"?20:-20));}});
+const schemaDialog=document.getElementById("schemaDialog");
+document.getElementById("schemaClose").addEventListener("click",()=>schemaDialog.close());
+document.getElementById("schemaOpen").addEventListener("click",async()=>{
+ schemaDialog.showModal();const status=document.getElementById("schemaStatus");
+ if(!conn){status.textContent="Initialise DuckDB to view the exact loaded schema.";return;}
+ try{const parts=[];for(const table of ["places","buildings"]){const result=await conn.query(`DESCRIBE london.${table};`);const rows=result.toArray().map(r=>r.toJSON());parts.push(`<h3>london.${table}</h3><table><tr><th>Column</th><th>SQL type</th></tr>${rows.map(r=>`<tr><td>${escHtml(r.column_name)}</td><td>${escHtml(r.column_type)}</td></tr>`).join("")}</table>`);}document.getElementById("schemaLive").innerHTML=parts.join("");status.textContent="Exact schema of the loaded tables.";}catch(e){status.textContent=e.message;}
+});
 </script>
-</body>
+<dialog id="schemaDialog"><h2>Tables &amp; schema</h2><button id="schemaClose" type="button">Close</button><p>Places: businesses and amenities represented by points. Buildings: physical footprint polygons. IDs do not directly join across these tables.</p><p>name aliases names.primary. category aliases taxonomy.primary with basic_category fallback. taxonomy.hierarchy is a list: list_contains searches its classifications. addresses is a list of structs: UNNEST expands each address.</p><p>lat/lon are dashboard-added bbox centres. building_area_m2 is an approximate bbox area, not measured footprint area. num_floors is a recorded storey count; height is in metres. NULL means unknown.</p><p aria-live="polite" id="schemaStatus"></p><div id="schemaLive"></div></dialog></body>
 </html>
